@@ -1,115 +1,161 @@
-import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../firebase';
-import { Motorista } from '../types';
-import { Trash2, UserPlus } from 'lucide-react';
+import { collection, getDocs, doc, addDoc, updateDoc, deleteDoc, runTransaction, query, where, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { Motorista, Gestor } from '../types';
+import { DriverEditModal } from '../components/DriverEditModal';
+import { PlusCircle, Trash2, Pencil } from 'lucide-react';
 
 export const DriverManagementPage: React.FC = () => {
-    const [drivers, setDrivers] = useState<Motorista[]>([]);
-    const [newDriverName, setNewDriverName] = useState('');
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<Motorista[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedDriver, setSelectedDriver] = useState<Motorista | null>(null);
 
-    const fetchDrivers = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const driversCollection = collection(db, 'motoristas');
-            const driversSnapshot = await getDocs(driversCollection);
-            const driversList = driversSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Motorista));
-            setDrivers(driversList.sort((a, b) => a.nome.localeCompare(b.nome)));
-        } catch (err) {
-            console.error("Erro ao buscar motoristas: ", err);
-            setError("Não foi possível carregar os motoristas.");
-        } finally {
-            setLoading(false);
-        }
-    };
+  const fetchDrivers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const querySnapshot = await getDocs(collection(db, 'motoristas'));
+      const driversList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Motorista));
+      setDrivers(driversList);
+    } catch (error) {
+      console.error("Error fetching drivers:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-    useEffect(() => {
-        fetchDrivers();
-    }, []);
+  useEffect(() => {
+    fetchDrivers();
+  }, [fetchDrivers]);
 
-    const handleAddDriver = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!newDriverName.trim()) {
-            setError("O nome do motorista não pode estar vazio.");
-            return;
-        }
-        setError(null);
-        try {
-            const driversCollection = collection(db, 'motoristas');
-            await addDoc(driversCollection, { nome: newDriverName.trim() });
-            setNewDriverName('');
-            fetchDrivers(); // Refresh list
-        } catch (err) {
-            console.error("Erro ao adicionar motorista: ", err);
-            setError("Falha ao adicionar novo motorista.");
-        }
-    };
+  const handleOpenModal = (driver: Motorista | null = null) => {
+    setSelectedDriver(driver);
+    setIsModalOpen(true);
+  };
 
-    const handleDeleteDriver = async (id: string) => {
-        if (window.confirm('Tem certeza que deseja excluir este motorista?')) {
-            try {
-                await deleteDoc(doc(db, 'motoristas', id));
-                fetchDrivers(); // Refresh list
-            } catch (err) {
-                console.error("Erro ao excluir motorista: ", err);
-                setError("Falha ao excluir motorista.");
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedDriver(null);
+  };
+
+  const handleSaveDriver = async (driverData: Motorista) => {
+    try {
+      if (selectedDriver) { // Editing existing driver
+        const oldGestorName = selectedDriver.gestor;
+        const newGestorName = driverData.gestor;
+        const driverRef = doc(db, 'motoristas', selectedDriver.id);
+
+        await runTransaction(db, async (transaction) => {
+            transaction.update(driverRef, { nome: driverData.nome, gestor: driverData.gestor });
+
+            if (oldGestorName !== newGestorName) {
+                const gestoresRef = collection(db, 'gestores');
+
+                const oldGestorQuery = query(gestoresRef, where("nome", "==", oldGestorName));
+                const oldGestorSnapshot = await getDocs(oldGestorQuery);
+                const oldGestorDoc = oldGestorSnapshot.docs[0];
+                
+                const newGestorQuery = query(gestoresRef, where("nome", "==", newGestorName));
+                const newGestorSnapshot = await getDocs(newGestorQuery);
+                const newGestorDoc = newGestorSnapshot.docs[0];
+
+                if(oldGestorDoc) {
+                    transaction.update(doc(db, 'gestores', oldGestorDoc.id), { motoristas: arrayRemove(driverData.nome) });
+                }
+                if(newGestorDoc) {
+                    transaction.update(doc(db, 'gestores', newGestorDoc.id), { motoristas: arrayUnion(driverData.nome) });
+                }
             }
+        });
+      } else { // Adding new driver
+        await addDoc(collection(db, 'motoristas'), { nome: driverData.nome, gestor: driverData.gestor });
+
+        const gestoresRef = collection(db, 'gestores');
+        const q = query(gestoresRef, where("nome", "==", driverData.gestor));
+        const gestorSnapshot = await getDocs(q);
+        const gestorDoc = gestorSnapshot.docs[0];
+        if (gestorDoc) {
+            await updateDoc(doc(db, 'gestores', gestorDoc.id), {
+                motoristas: arrayUnion(driverData.nome)
+            });
         }
-    };
+      }
+      fetchDrivers();
+    } catch (error) {
+      console.error("Error saving driver:", error);
+    }
+  };
 
-    return (
-        <div className="bg-white dark:bg-slate-800 shadow-md rounded-lg p-6">
-            <h2 className="text-2xl font-bold mb-6 text-slate-800 dark:text-white">Gerenciar Motoristas</h2>
-            
-            <form onSubmit={handleAddDriver} className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-8">
-                <input
-                    type="text"
-                    value={newDriverName}
-                    onChange={(e) => setNewDriverName(e.target.value)}
-                    placeholder="Nome do novo motorista"
-                    className="flex-grow w-full bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 dark:bg-slate-700 dark:border-slate-600 dark:text-white"
-                />
-                <button
-                    type="submit"
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 transition-colors"
-                >
-                    <UserPlus className="h-5 w-5" />
-                    Adicionar
-                </button>
-            </form>
+  const handleDeleteDriver = async (driver: Motorista) => {
+    if (window.confirm(`Tem certeza que deseja excluir ${driver.nome}?`)) {
+      try {
+        await runTransaction(db, async (transaction) => {
+            const driverRef = doc(db, 'motoristas', driver.id);
+            transaction.delete(driverRef);
 
-            {error && <p className="text-red-500 text-center mb-4">{error}</p>}
+            const gestoresRef = collection(db, 'gestores');
+            const q = query(gestoresRef, where("nome", "==", driver.gestor));
+            const gestorSnapshot = await getDocs(q);
+            const gestorDoc = gestorSnapshot.docs[0];
 
-            {loading ? (
-                <p className="text-center text-slate-500 dark:text-slate-400">Carregando motoristas...</p>
-            ) : (
-                <div className="overflow-x-auto relative">
-                    <table className="w-full text-sm text-left text-slate-500 dark:text-slate-400">
-                        <thead className="text-xs text-slate-700 uppercase bg-slate-100 dark:bg-slate-700 dark:text-slate-300">
-                            <tr>
-                                <th scope="col" className="px-6 py-3">Nome do Motorista</th>
-                                <th scope="col" className="px-6 py-3 text-right">Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {drivers.map(driver => (
-                                <tr key={driver.id} className="bg-white border-b dark:bg-slate-800 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600">
-                                    <td className="px-6 py-4 font-medium text-slate-900 dark:text-white whitespace-nowrap">{driver.nome}</td>
-                                    <td className="px-6 py-4 text-right">
-                                        <button onClick={() => handleDeleteDriver(driver.id)} className="text-red-500 hover:text-red-700 p-1" title="Excluir Motorista">
-                                            <Trash2 className="h-5 w-5" />
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                     {drivers.length === 0 && <p className="text-center py-4">Nenhum motorista cadastrado.</p>}
-                </div>
-            )}
-        </div>
-    );
+            if (gestorDoc) {
+                transaction.update(doc(db, 'gestores', gestorDoc.id), { motoristas: arrayRemove(driver.nome) });
+            }
+        });
+        fetchDrivers();
+      } catch (error) {
+        console.error("Error deleting driver:", error);
+      }
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center p-8">Carregando motoristas...</div>;
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-semibold">Motoristas</h2>
+        <button
+          onClick={() => handleOpenModal()}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700"
+        >
+          <PlusCircle className="h-5 w-5" />
+          <span>Adicionar Motorista</span>
+        </button>
+      </div>
+
+      <div className="relative overflow-x-auto shadow-md sm:rounded-lg">
+        <table className="w-full text-sm text-left text-slate-500 dark:text-slate-400">
+            <thead className="text-xs text-slate-700 uppercase bg-slate-50 dark:bg-slate-700 dark:text-slate-300">
+                <tr>
+                    <th scope="col" className="px-6 py-3">Nome</th>
+                    <th scope="col" className="px-6 py-3">Gestor Responsável</th>
+                    <th scope="col" className="px-6 py-3 text-right">Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {drivers.map((driver) => (
+                    <tr key={driver.id} className="bg-white border-b dark:bg-slate-800 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600">
+                        <td className="px-6 py-4 font-medium text-slate-900 dark:text-white whitespace-nowrap">{driver.nome}</td>
+                        <td className="px-6 py-4">{driver.gestor}</td>
+                        <td className="px-6 py-4 text-right space-x-4">
+                            <button onClick={() => handleOpenModal(driver)} className="font-medium text-blue-600 dark:text-blue-500 hover:underline"><Pencil className="h-5 w-5 inline" /></button>
+                            <button onClick={() => handleDeleteDriver(driver)} className="font-medium text-red-600 dark:text-red-500 hover:underline"><Trash2 className="h-5 w-5 inline" /></button>
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+      </div>
+
+      <DriverEditModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onSave={handleSaveDriver}
+        driver={selectedDriver}
+      />
+    </div>
+  );
 };
