@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, getDocs, doc, writeBatch, Timestamp, deleteDoc, serverTimestamp, orderBy, addDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, writeBatch, query, where, Timestamp, updateDoc, deleteDoc } from 'firebase/firestore';
 import { DailyRecord, Gestor, Motorista } from '../types';
 import { DriverRow } from '../components/DriverRow';
-import { Search, Save, Filter, Users } from 'lucide-react';
-import { STATUS_OPCOES, STATUS_VIAGEM_OPCOES, HORA_EXTRA_OPCOES } from '../constants';
+import { useAuth } from '../hooks/useAuth';
+import { Search, Save } from 'lucide-react';
 
 interface ControlPageProps {
   isAdmin: boolean;
@@ -13,61 +13,45 @@ interface ControlPageProps {
 
 export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile }) => {
   const [records, setRecords] = useState<DailyRecord[]>([]);
-  const [dirtyRecords, setDirtyRecords] = useState<Map<string, DailyRecord>>(new Map());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  // Filtros
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const [gestoresList, setGestoresList] = useState<string[]>([]);
-  const [selectedGestor, setSelectedGestor] = useState('');
+  const [gestores, setGestores] = useState<Gestor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedGestor, setSelectedGestor] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const { user } = useAuth();
+  
+  const [isSaving, setIsSaving] = useState(false);
+  const [updatedRecords, setUpdatedRecords] = useState<Map<string, Partial<DailyRecord>>>(new Map());
 
   const fetchGestores = useCallback(async () => {
-    if (!isAdmin) return;
     try {
-        const querySnapshot = await getDocs(collection(db, 'gestores'));
-        const gestores = querySnapshot.docs.map(doc => doc.data().nome as string);
-        setGestoresList(gestores);
-    } catch (err) {
-        console.error("Erro ao buscar gestores:", err);
+        const gestoresSnapshot = await getDocs(collection(db, 'gestores'));
+        const gestoresList = gestoresSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Gestor));
+        setGestores(gestoresList);
+        // Set default gestor filter if not admin
+        if (!isAdmin && gestorProfile) {
+            setSelectedGestor(gestorProfile.nome);
+        }
+    } catch (error) {
+        console.error("Error fetching gestores:", error);
     }
-  }, [isAdmin]);
-  
-  useEffect(() => {
-    fetchGestores();
-  }, [fetchGestores]);
+  }, [isAdmin, gestorProfile]);
 
-  const fetchRecords = useCallback(async () => {
-    const gestorToQuery = isAdmin ? selectedGestor : gestorProfile?.nome;
-    if (!gestorToQuery) {
-        if (!isAdmin) setError("Perfil de gestor não encontrado.");
-        setRecords([]);
-        return;
-    }
-    
+  const fetchRecords = useCallback(async (date: string) => {
     setLoading(true);
-    setError(null);
-    setDirtyRecords(new Map());
-
+    setRecords([]);
     try {
-      const start = new Date(startDate);
-      start.setUTCHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setUTCHours(23, 59, 59, 999);
+      const targetDate = new Date(date);
+      targetDate.setUTCHours(0, 0, 0, 0);
+      const startOfDay = Timestamp.fromDate(targetDate);
 
-      let recordsQuery = query(
-        collection(db, 'daily_records'),
-        where('gestor', '==', gestorToQuery),
-        where('data', '>=', Timestamp.fromDate(start)),
-        where('data', '<=', Timestamp.fromDate(end)),
-        orderBy('data', 'desc'),
-        orderBy('motorista', 'asc')
-      );
+      const nextDay = new Date(targetDate);
+      nextDay.setDate(targetDate.getDate() + 1);
+      const endOfDay = Timestamp.fromDate(nextDay);
 
-      const querySnapshot = await getDocs(recordsQuery);
+      const q = query(collection(db, 'registros_diarios'), where('data', '>=', startOfDay), where('data', '<', endOfDay));
+      const querySnapshot = await getDocs(q);
+
       const recordsList = querySnapshot.docs.map(doc => {
         const data = doc.data();
         return {
@@ -77,289 +61,264 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
         } as DailyRecord;
       });
       setRecords(recordsList);
-    } catch (err: any) {
-      console.error("Error fetching records:", err);
-      setError(`Falha ao carregar os dados. Verifique se o índice do Firestore foi criado corretamente (em daily_records: gestor ASC, data ASC, motorista ASC).`);
+    } catch (error) {
+      console.error("Error fetching records:", error);
     } finally {
       setLoading(false);
+      setUpdatedRecords(new Map()); // Clear pending changes on new fetch
     }
-  }, [isAdmin, gestorProfile, selectedGestor, startDate, endDate]);
+  }, []);
 
-  // Carregamento automático para supervisores
   useEffect(() => {
-    if (!isAdmin && gestorProfile) {
-      fetchRecords();
-    }
-  }, [isAdmin, gestorProfile, fetchRecords]);
+    fetchGestores();
+  }, [fetchGestores]);
 
-  const handleUpdate = (id: string, field: keyof DailyRecord, value: any) => {
-    const originalRecord = records.find(r => r.id === id);
-    if (originalRecord) {
-        const updatedRecord = { ...originalRecord, [field]: value };
-        setDirtyRecords(prev => new Map(prev).set(id, updatedRecord));
-        // Update local state for immediate UI feedback
-        setRecords(prev => prev.map(r => r.id === id ? updatedRecord : r));
+  useEffect(() => {
+    if (selectedDate) {
+      fetchRecords(selectedDate);
+    }
+  }, [selectedDate, fetchRecords]);
+  
+  const handleCreateDailyRecords = async () => {
+    if (!selectedDate) {
+        alert('Por favor, selecione uma data.');
+        return;
+    }
+    const confirmCreate = window.confirm(`Deseja criar os registros para o dia ${new Date(selectedDate).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}? Motoristas já existentes nesta data não serão duplicados.`);
+    if (!confirmCreate) return;
+
+    setLoading(true);
+    try {
+        const targetDate = new Date(selectedDate);
+        targetDate.setUTCHours(12, 0, 0, 0); // Use noon to avoid timezone issues
+        
+        // 1. Get existing records for the day to avoid duplicates
+        const startOfDay = new Date(targetDate);
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const endOfDay = new Date(targetDate);
+        endOfDay.setUTCHours(23, 59, 59, 999);
+        const existingRecordsQuery = query(collection(db, 'registros_diarios'), where('data', '>=', Timestamp.fromDate(startOfDay)), where('data', '<=', Timestamp.fromDate(endOfDay)));
+
+        const existingRecordsSnapshot = await getDocs(existingRecordsQuery);
+        const existingDrivers = new Set(existingRecordsSnapshot.docs.map(doc => doc.data().motorista));
+
+        // 2. Get all active drivers
+        const driversQuery = query(collection(db, 'motoristas'), where('statusEmprego', '==', 'ATIVO'));
+        const driversSnapshot = await getDocs(driversQuery);
+        
+        const batch = writeBatch(db);
+        let newRecordsCount = 0;
+        
+        const dateTimestamp = Timestamp.fromDate(targetDate);
+
+        driversSnapshot.forEach(doc => {
+            const driver = { id: doc.id, ...doc.data() } as Motorista;
+            if (!existingDrivers.has(driver.nome)) {
+                const newRecordRef = doc(collection(db, 'registros_diarios'));
+                batch.set(newRecordRef, {
+                    motorista: driver.nome,
+                    data: dateTimestamp,
+                    gestor: driver.gestor,
+                    placas: '',
+                    status: 'JORNADA',
+                    statusViagem: '',
+                    horaExtra: '',
+                    diasEmJornada: '',
+                    lastModifiedBy: user?.email || 'unknown',
+                });
+                newRecordsCount++;
+            }
+        });
+        
+        if (newRecordsCount > 0) {
+            await batch.commit();
+            alert(`${newRecordsCount} novos registros criados com sucesso!`);
+            fetchRecords(selectedDate); // Refresh records
+        } else {
+            alert('Nenhum novo motorista para adicionar. Todos os motoristas ativos já possuem registro para esta data.');
+        }
+
+    } catch (error) {
+        console.error("Error creating daily records:", error);
+        alert('Ocorreu um erro ao criar os registros.');
+    } finally {
+        setLoading(false);
     }
   };
 
+  const handleUpdateRecord = (id: string, field: keyof DailyRecord, value: any) => {
+    setRecords(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+    setUpdatedRecords(prev => {
+        const newMap = new Map(prev);
+        const currentUpdates = newMap.get(id) || {};
+        newMap.set(id, { ...currentUpdates, [field]: value });
+        return newMap;
+    });
+  };
+
   const handleSaveChanges = async () => {
-    if (dirtyRecords.size === 0) return;
-    setLoading(true);
+    if (updatedRecords.size === 0) {
+        alert("Nenhuma alteração para salvar.");
+        return;
+    }
+    setIsSaving(true);
     const batch = writeBatch(db);
-    dirtyRecords.forEach((record, id) => {
-        const recordRef = doc(db, 'daily_records', id);
-        const { id: recordId, data, ...rest } = record;
-        batch.update(recordRef, {
-            ...rest,
-            data: Timestamp.fromDate(new Date(data)),
-            lastModifiedBy: gestorProfile?.id || 'admin'
-        });
+    updatedRecords.forEach((changes, id) => {
+        const recordRef = doc(db, 'registros_diarios', id);
+        batch.update(recordRef, { ...changes, lastModifiedBy: user?.email || 'unknown' });
     });
 
     try {
         await batch.commit();
-        setDirtyRecords(new Map());
         alert("Alterações salvas com sucesso!");
+        setUpdatedRecords(new Map());
     } catch (error) {
         console.error("Error saving changes:", error);
         alert("Falha ao salvar as alterações.");
     } finally {
-        setLoading(false);
+        setIsSaving(false);
     }
   };
-
-  const handleDelete = async (id: string) => {
-     if (window.confirm("Tem certeza que deseja excluir este registro?")) {
-        try {
-            await deleteDoc(doc(db, "daily_records", id));
-            setRecords(prev => prev.filter(r => r.id !== id));
-            setDirtyRecords(prev => {
-                const newDirty = new Map(prev);
-                newDirty.delete(id);
-                return newDirty;
-            });
-        } catch (error) {
-            console.error("Error deleting record:", error);
-        }
-    }
-  };
-
-  const generateTodaysRecords = async () => {
-    setLoading(true);
-    try {
-      // 1. Get all active drivers for the selected manager
-      const motoristasRef = collection(db, 'motoristas');
-      const gestorToQuery = isAdmin ? selectedGestor : gestorProfile?.nome;
-      if(!gestorToQuery) {
-        alert("Selecione um gestor para gerar os registros.");
-        setLoading(false);
-        return;
-      }
-
-      const qDrivers = query(
-        motoristasRef, 
-        where('gestor', '==', gestorToQuery),
-        where('statusEmprego', '==', 'ATIVO')
-      );
-      const driversSnapshot = await getDocs(qDrivers);
-      const allActiveDrivers = driversSnapshot.docs.map(d => d.data() as Motorista);
-
-      // 2. Filter out drivers on vacation on the selected date
-      const selectedDate = new Date(startDate);
-      selectedDate.setUTCHours(12,0,0,0);
+  
+  const handleDeleteRecord = async (id: string) => {
+      const recordToDelete = records.find(r => r.id === id);
+      if (!recordToDelete) return;
       
-      const driversToLog = allActiveDrivers.filter(driver => {
-        if (driver.feriasInicio && driver.feriasFim) {
-          const feriasStart = new Date(driver.feriasInicio);
-          const feriasEnd = new Date(driver.feriasFim);
-           return selectedDate < feriasStart || selectedDate > feriasEnd;
-        }
-        return true;
-      });
-
-      // 3. Get records that already exist for this day and manager
-      const startOfDay = new Date(startDate);
-      startOfDay.setUTCHours(0,0,0,0);
-      const endOfDay = new Date(startDate);
-      endOfDay.setUTCHours(23,59,59,999);
-      
-      const qExisting = query(
-        collection(db, 'daily_records'),
-        where('gestor', '==', gestorToQuery),
-        where('data', '>=', Timestamp.fromDate(startOfDay)),
-        where('data', '<=', Timestamp.fromDate(endOfDay))
-      );
-      const existingSnapshot = await getDocs(qExisting);
-      const existingDriverNames = new Set(existingSnapshot.docs.map(d => d.data().motorista));
-
-      // 4. Determine which drivers need a new record
-      const driversWithoutLog = driversToLog.filter(d => !existingDriverNames.has(d.nome));
-
-      if (driversWithoutLog.length === 0) {
-        alert(`Todos os motoristas ativos de ${gestorToQuery} para ${startOfDay.toLocaleDateString('pt-BR')} já possuem registro.`);
-        setLoading(false);
-        return;
+      const confirmDelete = window.confirm(`Tem certeza que deseja excluir o registro de ${recordToDelete.motorista}?`);
+      if (confirmDelete) {
+          try {
+              await deleteDoc(doc(db, 'registros_diarios', id));
+              setRecords(prev => prev.filter(r => r.id !== id));
+              alert('Registro excluído com sucesso.');
+          } catch(error) {
+              console.error("Error deleting record: ", error);
+              alert('Falha ao excluir o registro.');
+          }
       }
-
-      // 5. Create new records in a batch
-      const batch = writeBatch(db);
-      driversWithoutLog.forEach(driver => {
-        const newRecordRef = doc(collection(db, 'daily_records'));
-        batch.set(newRecordRef, {
-            motorista: driver.nome,
-            gestor: driver.gestor,
-            data: Timestamp.fromDate(startOfDay),
-            status: 'JORNADA',
-            statusViagem: 'EM VIAGEM',
-            horaExtra: 'NÃO AUTORIZADO',
-            placas: '',
-            diasEmJornada: '',
-            justificativaJornada: '',
-            lastModifiedBy: gestorProfile?.id || 'admin'
-        });
-      });
-
-      await batch.commit();
-      alert(`${driversWithoutLog.length} novo(s) registro(s) criado(s) com sucesso!`);
-      fetchRecords();
-
-    } catch (err) {
-      console.error("Error generating records:", err);
-      alert("Falha ao gerar registros.");
-    } finally {
-      setLoading(false);
-    }
   };
-
 
   const filteredRecords = useMemo(() => {
-    return records.filter(record => {
-      const searchMatch = searchTerm === '' ||
-        record.motorista.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        record.placas?.toLowerCase().includes(searchTerm.toLowerCase());
-
-      if (!searchMatch) return false;
-
-      return Object.entries(columnFilters).every(([key, value]) => {
-        if (!value) return true;
-        return record[key as keyof DailyRecord] === value;
-      });
-    });
-  }, [records, searchTerm, columnFilters]);
-
-  const FilterSelect: React.FC<{ options: string[], column: keyof DailyRecord }> = ({ options, column }) => (
-     <div className="relative">
-      <select
-        value={columnFilters[column] || ''}
-        onChange={e => setColumnFilters(prev => ({ ...prev, [column]: e.target.value }))}
-        className="w-full text-xs p-2 pr-8 bg-slate-100 dark:bg-slate-600 border border-slate-300 dark:border-slate-500 rounded-md appearance-none"
-      >
-        <option value="">Todos</option>
-        {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-      </select>
-      <Filter className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-     </div>
-  );
+    return records
+      .filter(record => {
+        const gestorMatch = !selectedGestor || record.gestor === selectedGestor;
+        const searchMatch = !searchTerm || record.motorista.toLowerCase().includes(searchTerm.toLowerCase());
+        return gestorMatch && searchMatch;
+      })
+      .sort((a, b) => a.motorista.localeCompare(b.motorista));
+  }, [records, selectedGestor, searchTerm]);
+  
+  const hasPendingChanges = updatedRecords.size > 0;
 
   return (
-    <div>
-      <div className="p-4 bg-white dark:bg-slate-800 rounded-lg shadow-md mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+    <div className="space-y-6">
+      <div className="p-4 bg-white dark:bg-slate-800 rounded-lg shadow-md">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
               <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Início</label>
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full input-style" />
+                  <label htmlFor="date-picker" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                  <input
+                      type="date"
+                      id="date-picker"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="w-full input-style"
+                  />
               </div>
-              <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Fim</label>
-                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full input-style" />
-              </div>
-               {isAdmin && (
+
+              {isAdmin && (
                   <div>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Filtrar por Gestor</label>
-                      <select value={selectedGestor} onChange={e => setSelectedGestor(e.target.value)} className="w-full input-style">
-                          <option value="">Selecione um Gestor</option>
-                          {gestoresList.map(g => <option key={g} value={g}>{g}</option>)}
+                      <label htmlFor="gestor-filter" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Filtrar por Gestor</label>
+                      <select
+                          id="gestor-filter"
+                          value={selectedGestor}
+                          onChange={(e) => setSelectedGestor(e.target.value)}
+                          className="w-full input-style"
+                      >
+                          <option value="">Todos os Gestores</option>
+                          {gestores.map(g => <option key={g.id} value={g.nome}>{g.nome}</option>)}
                       </select>
                   </div>
               )}
-               <button onClick={fetchRecords} disabled={loading || (isAdmin && !selectedGestor)} className="btn-primary w-full">
-                  {loading ? 'Buscando...' : 'Buscar'}
-              </button>
+              
+              <div className="sm:col-span-2 lg:col-span-1">
+                  <label htmlFor="search-driver" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Buscar Motorista</label>
+                  <div className="relative">
+                      <input
+                          type="text"
+                          id="search-driver"
+                          placeholder="Nome do motorista..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full input-style pl-10"
+                      />
+                      <Search className="h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  </div>
+              </div>
+
+              {isAdmin && (
+                  <button
+                      onClick={handleCreateDailyRecords}
+                      disabled={loading}
+                      className="btn-secondary w-full"
+                  >
+                      Gerar Dia
+                  </button>
+              )}
           </div>
       </div>
       
-      <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-        <div className="relative w-full sm:w-auto">
-          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-            <Search className="h-5 w-5 text-slate-500 dark:text-slate-400" />
+      {hasPendingChanges && (
+          <div className="p-4 bg-yellow-100 dark:bg-yellow-900 rounded-lg shadow-md flex justify-between items-center">
+              <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Você tem alterações não salvas.</p>
+              <button
+                  onClick={handleSaveChanges}
+                  disabled={isSaving}
+                  className="btn-primary"
+              >
+                  <Save className="h-5 w-5" />
+                  <span>{isSaving ? 'Salvando...' : 'Salvar Alterações'}</span>
+              </button>
           </div>
-          <input
-            type="text"
-            placeholder="Buscar motorista ou placa..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="block w-full sm:w-80 p-2 pl-10 text-sm input-style"
-          />
-        </div>
-        
-        <div className="flex items-center gap-4 w-full sm:w-auto">
-            {isAdmin && (
-                 <button onClick={generateTodaysRecords} disabled={loading || !selectedGestor} className="btn-secondary w-full">
-                    <Users className="h-5 w-5" />
-                    <span>Gerar Registros Ativos</span>
-                </button>
-            )}
-            <button onClick={handleSaveChanges} disabled={loading || dirtyRecords.size === 0} className="btn-primary w-full">
-                <Save className="h-5 w-5" />
-                <span>Salvar Alterações ({dirtyRecords.size})</span>
-            </button>
-        </div>
-      </div>
+      )}
 
-      {error && <p className="text-center text-red-500 bg-red-100 dark:bg-red-900/50 p-4 rounded-lg mb-4">{error}</p>}
-
-      <div className="relative overflow-x-auto shadow-md sm:rounded-lg">
+      {loading ? (
+        <div className="text-center p-8">Carregando registros...</div>
+      ) : (
+        <div className="relative overflow-x-auto shadow-md sm:rounded-lg">
           <table className="w-full text-sm text-left text-slate-500 dark:text-slate-400">
             <thead className="text-xs text-slate-700 uppercase bg-slate-50 dark:bg-slate-700 dark:text-slate-300">
               <tr>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>Motorista</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '150px' }}>Placas</th>
-                <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>
-                    Status
-                    <FilterSelect options={STATUS_OPCOES} column="status" />
-                </th>
-                <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>
-                    Status Viagem
-                    <FilterSelect options={STATUS_VIAGEM_OPCOES} column="statusViagem" />
-                </th>
-                <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>
-                    Hora Extra
-                    <FilterSelect options={HORA_EXTRA_OPCOES} column="horaExtra" />
-                </th>
+                <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Status</th>
+                <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Status Viagem</th>
+                <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Hora Extra</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '150px' }}>Dias em Jornada</th>
-                <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>{'Justificativa Jornada > 7 Dias'}</th>
+                <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>Justificativa Jornada</th>
                 <th scope="col" className="px-3 py-3">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                <tr><td colSpan={8} className="text-center p-8">Carregando registros...</td></tr>
-              ) : filteredRecords.length === 0 ? (
-                 <tr><td colSpan={8} className="text-center p-8">Nenhum registro encontrado para os filtros selecionados.</td></tr>
+              {filteredRecords.length > 0 ? (
+                  filteredRecords.map(record => (
+                      <DriverRow
+                          key={record.id}
+                          record={record}
+                          onUpdate={handleUpdateRecord}
+                          onDelete={handleDeleteRecord}
+                          isAdmin={isAdmin}
+                      />
+                  ))
               ) : (
-                filteredRecords.map((record) => (
-                  <DriverRow
-                    key={record.id}
-                    record={record}
-                    onUpdate={handleUpdate}
-                    onDelete={handleDelete}
-                    isAdmin={isAdmin}
-                  />
-                ))
+                  <tr>
+                      <td colSpan={8} className="text-center p-8 text-slate-500 dark:text-slate-400">
+                          Nenhum registro encontrado para a data e filtros selecionados.
+                      </td>
+                  </tr>
               )}
             </tbody>
           </table>
-      </div>
+        </div>
+      )}
     </div>
   );
 };
