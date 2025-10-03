@@ -7,14 +7,14 @@ import {
   getDocs,
   doc,
   updateDoc,
-  writeBatch,
-  Timestamp,
   deleteDoc,
+  Timestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { DailyRecord, Motorista, Gestor } from '../types';
+import { useAuth } from '../hooks/useAuth';
 import { DriverRow } from '../components/DriverRow';
 import { Search } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
 
 interface ControlPageProps {
   isAdmin: boolean;
@@ -22,207 +22,197 @@ interface ControlPageProps {
 }
 
 export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile }) => {
-  const [records, setRecords] = useState<DailyRecord[]>([]);
+  const { user } = useAuth();
+  const [dailyRecords, setDailyRecords] = useState<DailyRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => {
-    // Initialize with today's date at UTC midnight
     const today = new Date();
-    return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+    today.setHours(0, 0, 0, 0); // Local midnight
+    return today;
   });
-  const { user } = useAuth(); // for lastModifiedBy
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const fetchAndCreateRecords = useCallback(async () => {
-    if (!gestorProfile) {
-      setError("Perfil de gestor não encontrado.");
-      setLoading(false);
-      return;
-    }
+  const formatDateForInput = (date: Date): string => {
+    // Helper to get YYYY-MM-DD from a Date object, respecting local date
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
+  const fetchAndSyncRecords = useCallback(async (date: Date) => {
+    if (!gestorProfile || !user) return;
     setLoading(true);
-    setError(null);
-    
+
     try {
-      const targetDateStart = Timestamp.fromDate(selectedDate);
-      const targetDateEnd = new Date(selectedDate);
-      targetDateEnd.setUTCDate(targetDateEnd.getUTCDate() + 1);
-      const targetDateEndTimestamp = Timestamp.fromDate(targetDateEnd);
-      
-      // 1. Fetch all active drivers for the current scope (admin or gestor)
-      let driversQuery;
+      // 1. Get all active drivers for the current manager or all if admin
+      const motoristasRef = collection(db, 'motoristas');
+      let motoristasQuery;
       if (isAdmin) {
-        driversQuery = query(collection(db, 'motoristas'), where('statusEmprego', '==', 'ATIVO'));
+        motoristasQuery = query(motoristasRef, where('statusEmprego', '==', 'ATIVO'));
       } else {
-        driversQuery = query(
-          collection(db, 'motoristas'),
-          where('gestor', '==', gestorProfile.nome),
-          where('statusEmprego', '==', 'ATIVO')
+        motoristasQuery = query(
+            motoristasRef,
+            where('gestor', '==', gestorProfile.nome),
+            where('statusEmprego', '==', 'ATIVO')
         );
       }
-      const driversSnapshot = await getDocs(driversQuery);
-      const activeDrivers = driversSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Motorista));
-      const activeDriverNames = activeDrivers.map(d => d.nome);
       
-      if (activeDriverNames.length === 0) {
-        setRecords([]);
-        setLoading(false);
-        return;
-      }
+      const motoristasSnapshot = await getDocs(motoristasQuery);
+      const activeDrivers = motoristasSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Motorista));
 
-      // Helper function to query records in chunks
-      const queryRecordsByDrivers = async (driverNames: string[]) => {
-        if (driverNames.length === 0) return [];
-        const chunkSize = 30; // Firestore 'in' query limit
-        const promises = [];
-        for (let i = 0; i < driverNames.length; i += chunkSize) {
-            const chunk = driverNames.slice(i, i + chunkSize);
-            const recordsQuery = query(
-                collection(db, 'registros'),
-                where('data', '>=', targetDateStart),
-                where('data', '<', targetDateEndTimestamp),
-                where('motorista', 'in', chunk)
-            );
-            promises.push(getDocs(recordsQuery));
-        }
-        const snapshots = await Promise.all(promises);
-        return snapshots.flatMap(snapshot => 
-            snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    ...data,
-                    data: (data.data as Timestamp).toDate(),
-                } as DailyRecord
-            })
-        );
-      };
-
-      // 2. Fetch existing records for these drivers for the selected date
-      const existingRecordsData = await queryRecordsByDrivers(activeDriverNames);
-      const existingRecordDriverNames = new Set(existingRecordsData.map(r => r.motorista));
-
-      // 3. Identify drivers missing a record for the day and create new ones
-      const missingDrivers = activeDrivers.filter(d => !existingRecordDriverNames.has(d.nome));
+      // 2. Get existing daily records for the selected date
+      const startOfDay = Timestamp.fromDate(date);
       
-      if (missingDrivers.length > 0) {
-          const batch = writeBatch(db);
-          missingDrivers.forEach(driver => {
-              const newRecordRef = doc(collection(db, 'registros'));
-              batch.set(newRecordRef, {
-                  motorista: driver.nome,
-                  gestor: driver.gestor,
-                  data: targetDateStart,
-                  status: 'JORNADA',
-                  statusViagem: 'EM VIAGEM',
-                  horaExtra: 'NÃO AUTORIZADO',
-                  placas: '',
-                  diasEmJornada: '',
-                  justificativaJornada: '',
-                  lastModifiedBy: user?.email || 'system',
-              });
+      const recordsCollectionRef = collection(db, 'registrosDiarios');
+      const recordsQuery = query(recordsCollectionRef, where('data', '==', startOfDay));
+      
+      const recordsSnapshot = await getDocs(recordsQuery);
+      const existingRecordsMap = new Map<string, DailyRecord>();
+      recordsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        existingRecordsMap.set(data.motorista, {
+            id: doc.id,
+            ...data,
+            data: (data.data as Timestamp).toDate()
+        } as DailyRecord)
+      });
+      
+      // 3. Sync records: create missing ones
+      const batch = writeBatch(db);
+      const allRecordsForDay: DailyRecord[] = [];
+      const dateId = formatDateForInput(date);
+
+      for (const driver of activeDrivers) {
+        let record = existingRecordsMap.get(driver.nome);
+        if (!record) {
+          const recordId = `${dateId}_${driver.nome.replace(/[^a-zA-Z0-9]/g, '-')}`;
+          const newRecordData: Omit<DailyRecord, 'id'> = {
+            motorista: driver.nome,
+            data: date,
+            gestor: driver.gestor,
+            placas: '',
+            status: 'JORNADA',
+            statusViagem: '',
+            horaExtra: '',
+            diasEmJornada: '',
+            justificativaJornada: '',
+            lastModifiedBy: user.email,
+          };
+          const recordRef = doc(db, 'registrosDiarios', recordId);
+          batch.set(recordRef, {
+              ...newRecordData,
+              data: Timestamp.fromDate(newRecordData.data)
           });
-          await batch.commit();
-          // Re-fetch all records to get the newly created ones
-          const allRecordsData = await queryRecordsByDrivers(activeDriverNames);
-          setRecords(allRecordsData.sort((a, b) => a.motorista.localeCompare(b.motorista)));
-
-      } else {
-         setRecords(existingRecordsData.sort((a, b) => a.motorista.localeCompare(b.motorista)));
+          allRecordsForDay.push({ ...newRecordData, id: recordId });
+        } else {
+          allRecordsForDay.push(record);
+        }
       }
 
-    } catch (e) {
-      console.error("Error fetching or creating records: ", e);
-      setError("Falha ao carregar os dados. Tente novamente mais tarde.");
+      await batch.commit();
+      
+      setDailyRecords(allRecordsForDay.sort((a,b) => a.motorista.localeCompare(b.motorista)));
+    } catch (error) {
+      console.error("Error fetching or syncing daily records:", error);
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, gestorProfile, selectedDate, user?.email]);
+  }, [isAdmin, gestorProfile, user]);
 
   useEffect(() => {
-    fetchAndCreateRecords();
-  }, [fetchAndCreateRecords]);
+    if (gestorProfile) {
+        fetchAndSyncRecords(selectedDate);
+    } else {
+        setLoading(false);
+    }
+  }, [selectedDate, fetchAndSyncRecords, gestorProfile]);
 
   const handleUpdateRecord = async (id: string, field: keyof DailyRecord, value: any) => {
+    if(!user) return;
     try {
-      const recordRef = doc(db, 'registros', id);
-      await updateDoc(recordRef, {
-        [field]: value,
-        lastModifiedBy: user?.email,
-      });
-      setRecords(prevRecords =>
-        prevRecords.map(r => (r.id === id ? { ...r, [field]: value } : r))
-      );
+        const recordRef = doc(db, 'registrosDiarios', id);
+        await updateDoc(recordRef, {
+            [field]: value,
+            lastModifiedBy: user.email,
+            lastModifiedAt: Timestamp.now(),
+        });
+
+        setDailyRecords(prevRecords =>
+            prevRecords.map(rec =>
+                rec.id === id ? { ...rec, [field]: value } : rec
+            )
+        );
     } catch (error) {
-      console.error("Error updating record:", error);
-      alert("Falha ao atualizar o registro.");
+        console.error("Error updating record:", error);
+        alert('Falha ao atualizar o registro.');
     }
   };
   
   const handleDeleteRecord = async (id: string) => {
-    if(!isAdmin) {
-        alert("Apenas administradores podem excluir registros.");
-        return;
-    }
-    if (window.confirm('Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita.')) {
-        try {
-            await deleteDoc(doc(db, 'registros', id));
-            setRecords(prevRecords => prevRecords.filter(r => r.id !== id));
-        } catch (error) {
-            console.error("Error deleting record:", error);
-            alert("Falha ao excluir o registro.");
-        }
-    }
+      if (window.confirm("Tem certeza que deseja excluir este registro diário? Esta ação não pode ser desfeita.")) {
+          try {
+              await deleteDoc(doc(db, 'registrosDiarios', id));
+              setDailyRecords(prev => prev.filter(rec => rec.id !== id));
+          } catch (error) {
+              console.error("Error deleting record:", error);
+              alert("Falha ao excluir o registro.");
+          }
+      }
   };
 
   const filteredRecords = useMemo(() => {
-    if (!searchTerm) return records;
-    return records.filter(record =>
+    if (!searchTerm) {
+      return dailyRecords;
+    }
+    return dailyRecords.filter(record =>
       record.motorista.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      record.placas?.toLowerCase().includes(searchTerm.toLowerCase())
+      record.placas?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      record.status.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  }, [records, searchTerm]);
+  }, [dailyRecords, searchTerm]);
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const dateString = e.target.value;
-      const [year, month, day] = dateString.split('-').map(Number);
-      // Create date in UTC to avoid timezone issues with date picker
-      const dateInUTC = new Date(Date.UTC(year, month - 1, day));
-      setSelectedDate(dateInUTC);
+    const [year, month, day] = e.target.value.split('-').map(Number);
+    const newDate = new Date(year, month - 1, day);
+    setSelectedDate(newDate);
+  };
+  
+  if (!gestorProfile) {
+      return <div className="text-center p-8">Carregando perfil do usuário...</div>;
   }
-
+  
   return (
     <div>
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 p-4 bg-white dark:bg-slate-800 rounded-lg shadow">
-        <div className="relative w-full sm:w-auto">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar por motorista ou placa..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full sm:w-64 pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-md bg-slate-50 dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+        <div className="mb-6 flex flex-col sm:flex-row gap-4 items-center justify-between">
+            <div className="relative w-full sm:w-auto">
+                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                    <Search className="h-5 w-5 text-slate-400" />
+                </div>
+                <input
+                    type="text"
+                    placeholder="Filtrar por motorista, placa ou status..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="block w-full sm:w-80 p-2 pl-10 text-sm text-slate-900 border border-slate-300 rounded-lg bg-slate-50 focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:placeholder-slate-400 dark:text-white"
+                />
+            </div>
+            <div className="w-full sm:w-auto">
+                <input
+                    type="date"
+                    value={formatDateForInput(selectedDate)}
+                    onChange={handleDateChange}
+                    className="block w-full p-2 text-sm text-slate-900 border border-slate-300 rounded-lg bg-slate-50 focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:border-slate-600 dark:placeholder-slate-400 dark:text-white"
+                />
+            </div>
         </div>
-        <div className="flex items-center gap-4">
-            <label htmlFor="date-picker" className="font-medium shrink-0">Data:</label>
-            <input 
-                id="date-picker"
-                type="date"
-                value={selectedDate.toISOString().split('T')[0]}
-                onChange={handleDateChange}
-                className="p-2 border border-slate-300 dark:border-slate-600 rounded-md bg-slate-50 dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-        </div>
-      </div>
 
-      {loading && <p className="text-center p-4">Carregando registros...</p>}
-      {error && <p className="text-center p-4 text-red-500">{error}</p>}
-      
-      {!loading && !error && (
+      {loading ? (
+        <p className="text-center text-slate-500 dark:text-slate-400">Sincronizando registros para {selectedDate.toLocaleDateString('pt-BR')}...</p>
+      ) : (
         <div className="relative overflow-x-auto shadow-md sm:rounded-lg">
           <table className="w-full text-sm text-left text-slate-500 dark:text-slate-400">
-            <thead className="text-xs text-slate-700 uppercase bg-slate-50 dark:bg-slate-700 dark:text-slate-300 sticky top-0 z-10">
+            <thead className="text-xs text-slate-700 uppercase bg-slate-50 dark:bg-slate-700 dark:text-slate-300">
               <tr>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>Motorista</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '150px' }}>Placas</th>
@@ -230,13 +220,13 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Status Viagem</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Hora Extra</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '150px' }}>Dias em Jornada</th>
-                <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>Justificativa Jornada</th>
-                <th scope="col" className="px-3 py-3">Ações</th>
+                <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>Justificativa Jornada > 7 dias</th>
+                <th scope="col" className="px-3 py-3 text-right">Ações</th>
               </tr>
             </thead>
             <tbody>
               {filteredRecords.length > 0 ? (
-                filteredRecords.map(record => (
+                filteredRecords.map((record) => (
                   <DriverRow
                     key={record.id}
                     record={record}
@@ -247,8 +237,8 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="text-center p-4">
-                    Nenhum registro encontrado para a data e filtros selecionados.
+                  <td colSpan={8} className="text-center py-4 text-slate-500 dark:text-slate-400">
+                    Nenhum motorista ativo para este gestor ou nenhum registro para a data e filtro selecionados.
                   </td>
                 </tr>
               )}
