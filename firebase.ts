@@ -9,14 +9,15 @@ import { getAuth } from "firebase/auth";
 // Fix: Replaced `import.meta.env` with `process.env` to resolve TypeScript errors.
 // Bundlers like Vite replace `process.env.VITE_*` with the corresponding values at build time,
 // making it a safe and compatible way to access environment variables on the client.
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: process.env.VITE_API_KEY,
-  authDomain: process.env.VITE_AUTH_DOMAIN,
-  projectId: process.env.VITE_PROJECT_ID,
-  storageBucket: process.env.VITE_STORAGE_BUCKET,
-  messagingSenderId: process.env.VITE_MESSAGING_SENDER_ID,
-  appId: process.env.VITE_APP_ID,
-  measurementId: process.env.VITE_MEASUREMENT_ID
+  apiKey: "AIzaSyA70---C7TrwyjPsyxpiNaQe4J6oBAkqFs",
+  authDomain: "controlediariomotoristas.firebaseapp.com",
+  projectId: "controlediariomotoristas",
+  storageBucket: "controlediariomotoristas.firebasestorage.app",
+  messagingSenderId: "121923762953",
+  appId: "1:121923762953:web:ba370b7b8a6f0087a4b1d8",
+  measurementId: "G-X66ZGHQ6HW"
 };
 
 // Validação para garantir que as variáveis de ambiente foram carregadas
