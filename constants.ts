@@ -1,5 +1,24 @@
-import { DriverGeneralStatus, TripStatus, OvertimeStatus } from './types';
+export const STATUS_GERAL_OPCOES = [
+    "JORNADA",
+    "FOLGA NA ESTRADA",
+    "FOLGA EM CASA",
+    "FÉRIAS",
+    "ATESTADO",
+    "FALTA",
+    "SUSPENSÃO",
+    "LICENÇA PATERNIDADE",
+    "LICENÇA LUTO",
+    "DESLIGADO",
+    "AFASTADO",
+];
 
-export const GENERAL_STATUS_OPTIONS: string[] = Object.values(DriverGeneralStatus);
-export const TRIP_STATUS_OPTIONS: string[] = Object.values(TripStatus);
-export const OVERTIME_OPTIONS: string[] = Object.values(OvertimeStatus);
+export const STATUS_VIAGEM_OPCOES = [
+    "EM VIAGEM",
+    "EM CARREGAMENTO",
+    "EM DESCARGA",
+];
+
+export const HORA_EXTRA_OPCOES = [
+    "AUTORIZADO",
+    "NÃO AUTORIZADO",
+];

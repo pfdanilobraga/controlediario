@@ -8,22 +8,12 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ user, onLogout }) => {
-    const currentDate = new Date().toLocaleDateString('pt-BR', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    });
-
     return (
         <header className="flex flex-col sm:flex-row justify-between items-center">
             <div className="text-center sm:text-left">
                 <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 dark:text-white">
                     Controle Diário de Motoristas
                 </h1>
-                <p className="mt-2 text-lg text-slate-600 dark:text-slate-400">
-                    {currentDate}
-                </p>
             </div>
             {user && (
                  <div className="flex items-center gap-4 mt-4 sm:mt-0">
