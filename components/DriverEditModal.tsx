@@ -1,4 +1,4 @@
-import React, 'react';
+import React from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { Motorista, Gestor } from '../types';
 import { db } from '../firebase';
@@ -115,7 +115,7 @@ export const DriverEditModal: React.FC<DriverEditModalProps> = ({ isOpen, onClos
                 <input type="date" {...register('feriasInicio')} className="w-full input-style" />
               </div>
               <div>
-                <label htmlFor="feriasFim" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fim Férias</label>
+                <label htmlFor="ferim" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fim Férias</label>
                 <input type="date" {...register('feriasFim')} className="w-full input-style" />
               </div>
             </div>
