@@ -222,7 +222,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
                             <th scope="col" className="px-3 py-3">Status Viagem</th>
                             <th scope="col" className="px-3 py-3">Hora Extra</th>
                             <th scope="col" className="px-3 py-3">Dias em Jornada</th>
-                            <th scope="col" className="px-3 py-3">Justificativa Jornada > 7 Dias</th>
+                            <th scope="col" className="px-3 py-3">{'Justificativa Jornada > 7 Dias'}</th>
                             <th scope="col" className="px-3 py-3">Ações</th>
                         </tr>
                     </thead>
