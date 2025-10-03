@@ -1,4 +1,3 @@
-// Fix: Define the application's data structures to resolve type errors.
 export interface DailyRecord {
   id: string;
   motorista: string;
@@ -13,13 +12,12 @@ export interface DailyRecord {
 }
 
 export interface Gestor {
-  id: string; // email do gestor
+  id: string;
   nome: string;
-  motoristas: string[]; // Nomes dos motoristas
+  motoristas: string[];
 }
 
 export interface Motorista {
-    id: string; // ID do documento no firestore
+    id: string;
     nome: string;
-    gestor: string; // email do gestor
 }
