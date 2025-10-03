@@ -1,38 +1,31 @@
-export enum DriverGeneralStatus {
-    JORNADA = 'JORNADA',
-    FOLGA_NA_ESTRADA = 'FOLGA NA ESTRADA',
-    FOLGA_EM_CASA = 'FOLGA EM CASA',
-    FERIAS = 'FÉRIAS',
-    ATESTADO = 'ATESTADO',
-    FALTA = 'FALTA',
-    SUSPENSAO = 'SUSPENSÃO',
-    LICENCA_PATERNIDADE = 'LICENÇA PATERNIDADE',
-    LICENCA_LUTO = 'LICENÇA LUTO',
-    DESLIGADO = 'DESLIGADO',
-    AFASTADO = 'AFASTADO'
-}
-
-export enum TripStatus {
-    EM_VIAGEM = 'EM VIAGEM',
-    EM_CARREGAMENTO = 'EM CARREGAMENTO',
-    EM_DESCARGA = 'EM DESCARGA'
-}
-
-export enum OvertimeStatus {
-    AUTORIZADO = 'AUTORIZADO',
-    NAO_AUTORIZADO = 'NÃO AUTORIZADO'
-}
+import { Timestamp } from 'firebase/firestore';
 
 export interface Driver {
     id: string;
-    motorista: string;
-    gestor: string;
-    data: Date;
-    status: DriverGeneralStatus | string;
-    alteracaoStatus: DriverGeneralStatus | string;
-    justificativaAlteracaoStatus: string;
-    statusViagem: TripStatus | string;
-    justificativaStatusViagem: string;
-    horaExtra: OvertimeStatus | string;
-    justificativaHoraExtra: string;
+    name: string;
+    generalStatus: DriverGeneralStatus;
+    tripStatus: TripStatus;
+    overtime: OvertimeStatus;
+    notes: string;
+    createdAt: Timestamp;
+}
+
+export enum DriverGeneralStatus {
+    Disponivel = 'Disponível',
+    Indisponivel = 'Indisponível',
+    EmViagem = 'Em Viagem',
+    EmDescanso = 'Em Descanso',
+}
+
+export enum TripStatus {
+    NaoIniciada = 'Não Iniciada',
+    EmTransito = 'Em Trânsito',
+    Concluida = 'Concluída',
+    Cancelada = 'Cancelada',
+}
+
+export enum OvertimeStatus {
+    NaoSeAplica = 'Não se aplica',
+    Compensacao = 'Compensação',
+    HoraExtra = 'Hora Extra',
 }
