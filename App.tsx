@@ -12,6 +12,7 @@ const App: React.FC = () => {
     const [records, setRecords] = useState<DailyRecord[]>([]);
     const [dirtyRecords, setDirtyRecords] = useState<Map<string, DailyRecord>>(new Map());
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -21,6 +22,7 @@ const App: React.FC = () => {
         if (!user || !user.email || !startDate || !endDate) return;
 
         setLoading(true);
+        setError(null);
         setDirtyRecords(new Map()); // Clear pending changes on new fetch
 
         const start = new Date(startDate);
@@ -51,9 +53,9 @@ const App: React.FC = () => {
             });
             setRecords(recordsData);
             setLoading(false);
-        }, (error) => {
-            console.error("Error fetching documents: ", error);
-            alert('Falha ao carregar os dados. Verifique se o índice do Firestore foi criado corretamente (em daily_records: gestor ASC, data ASC, motorista ASC).');
+        }, (err) => {
+            console.error("Error fetching documents: ", err);
+            setError('Falha ao carregar os dados. Verifique se o índice do Firestore foi criado corretamente (em daily_records: gestor ASC, data ASC, motorista ASC).');
             setLoading(false);
         });
 
@@ -166,7 +168,9 @@ const App: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {loading ? (
+                                {error ? (
+                                    <tr><td colSpan={11} className="text-center py-8 px-4 text-red-500"><p className="font-semibold">Ocorreu um erro ao carregar os dados.</p><p className="text-sm font-mono mt-2 bg-red-50 dark:bg-red-900/20 p-2 rounded">{error}</p></td></tr>
+                                ) : loading ? (
                                     <tr><td colSpan={11} className="text-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div><p className="mt-2">Carregando registros...</p></td></tr>
                                 ) : filteredRecords.length > 0 ? (
                                     filteredRecords.map(record => (
