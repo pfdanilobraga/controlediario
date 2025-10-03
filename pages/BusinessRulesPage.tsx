@@ -1,138 +1,122 @@
-// Fix: Implemented the BusinessRulesPage with Gemini API integration for data analysis.
-import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
-import { useAuth } from '../hooks/useAuth';
-import { DailyLog } from '../types';
+// Fix: Implemented the BusinessRulesPage for data analysis using the Gemini API.
+import React, { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { STATUS_GERAL_OPCOES, STATUS_VIAGEM_OPCOES, HORA_EXTRA_OPCOES } from '../constants';
-
-// Per guideline: API key is obtained from process.env.API_KEY and its availability is assumed.
-const apiKey = process.env.API_KEY;
-const ai = new GoogleGenAI({ apiKey: apiKey! });
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
+import { DailyControl } from '../types';
+import { FIRESTORE_COLLECTION } from '../constants';
 
 export const BusinessRulesPage: React.FC = () => {
-    const { user } = useAuth();
-    const [logs, setLogs] = useState<DailyLog[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [analysis, setAnalysis] = useState('');
-    const [error, setError] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [controls, setControls] = useState<DailyControl[]>([]);
 
     useEffect(() => {
-        const fetchLogs = async () => {
-            if (!user) return;
+        const fetchControls = async () => {
             try {
-                const logsCollection = collection(db, 'dailyLogs');
-                const q = query(logsCollection, where('userId', '==', user.uid));
-                const querySnapshot = await getDocs(q);
-                const logsData = querySnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data(),
-                } as DailyLog));
-                setLogs(logsData);
-            } catch (e) {
-                console.error("Error fetching logs for analysis: ", e);
-                setError("Falha ao buscar os dados dos motoristas.");
+                const querySnapshot = await getDocs(collection(db, FIRESTORE_COLLECTION));
+                const fetchedControls = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as DailyControl[];
+                setControls(fetchedControls);
+            } catch (err) {
+                console.error(err);
+                setError('Falha ao carregar dados para análise.');
             }
         };
+        fetchControls();
+    }, []);
 
-        fetchLogs();
-    }, [user]);
-    
-    const generateAnalysis = async () => {
-        if (!apiKey) {
-            setError("A chave da API do Google GenAI não está configurada. Verifique as variáveis de ambiente.");
+    const handleAnalyze = async () => {
+        if (!process.env.API_KEY) {
+            setError("Chave de API do Gemini não encontrada na variável de ambiente process.env.API_KEY.");
             return;
         }
-        if (logs.length === 0) {
-            setAnalysis("Não há dados de motoristas para analisar.");
+
+        if (controls.length === 0) {
+            setError("Não há dados suficientes para análise.");
             return;
         }
 
         setIsLoading(true);
+        setError(null);
         setAnalysis('');
-        setError('');
-
-        const logsSummary = logs.map(log => ({
-            motorista: log.driverName,
-            status_geral: log.statusGeral,
-            status_viagem: log.statusViagem,
-            hora_extra: log.horaExtra,
-            observacao: log.observacao,
-        }));
-
-        const prompt = `
-            Com base nos seguintes dados de controle diário de motoristas, forneça uma análise gerencial resumida em português.
-            Destaque pontos de atenção, como motoristas com muitas horas extras autorizadas, motoristas inativos (folga, férias, atestado),
-            e a distribuição geral dos status. Seja conciso, use tópicos (bullet points) e direto ao ponto.
-
-            Dados:
-            ${JSON.stringify(logsSummary, null, 2)}
-        `;
 
         try {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+            const controlsData = JSON.stringify(controls.map(({id, ...c}) => c), null, 2); // Remove ID for cleaner analysis
+            const prompt = `
+                Você é um especialista em logística e gestão de frotas.
+                Analise os seguintes dados de controle diário de motoristas e forneça insights.
+                Os dados estão em formato JSON.
+
+                Dados:
+                ${controlsData}
+
+                Por favor, responda em português do Brasil com a seguinte estrutura:
+                1.  **Resumo Geral:** Um resumo do status geral dos motoristas.
+                2.  **Principais Pontos de Atenção:** Identifique os principais motivos para motoristas estarem "Bloqueado" ou "Afastado".
+                3.  **Sugestões de Melhoria:** Com base na análise, sugira 1 ou 2 ações que a gestão pode tomar para melhorar a disponibilidade dos motoristas.
+
+                Formate a sua resposta usando Markdown, especialmente títulos com negrito.
+            `;
+            
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: prompt,
             });
+
             setAnalysis(response.text);
+
         } catch (err) {
-            console.error("Error generating analysis: ", err);
-            setError("Ocorreu um erro ao gerar a análise. Verifique o console para mais detalhes.");
+            console.error(err);
+            setError('Ocorreu um erro ao realizar a análise com a IA. Verifique sua chave de API e tente novamente.');
         } finally {
             setIsLoading(false);
         }
     };
 
+    const formatApiResponse = (text: string) => {
+        return text
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n/g, '<br />');
+    };
 
+    const analysisHtml = useMemo(() => analysis ? formatApiResponse(analysis) : '', [analysis]);
+    
     return (
-        <div className="space-y-8">
-            <div>
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Regras de Negócio e Opções</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="p-4 bg-white dark:bg-slate-800 rounded-lg shadow">
-                        <h3 className="font-semibold text-slate-900 dark:text-white mb-2">Status Geral</h3>
-                        <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
-                            {STATUS_GERAL_OPCOES.map(opt => <li key={opt}>{opt}</li>)}
-                        </ul>
-                    </div>
-                    <div className="p-4 bg-white dark:bg-slate-800 rounded-lg shadow">
-                        <h3 className="font-semibold text-slate-900 dark:text-white mb-2">Status Viagem</h3>
-                        <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
-                            {STATUS_VIAGEM_OPCOES.map(opt => <li key={opt}>{opt}</li>)}
-                        </ul>
-                    </div>
-                    <div className="p-4 bg-white dark:bg-slate-800 rounded-lg shadow">
-                        <h3 className="font-semibold text-slate-900 dark:text-white mb-2">Hora Extra</h3>
-                        <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
-                            {HORA_EXTRA_OPCOES.map(opt => <li key={opt}>{opt}</li>)}
-                        </ul>
-                    </div>
-                </div>
-            </div>
-
-            <div>
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Análise com IA Gemini</h2>
+        <section>
+            <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md">
+                <h2 className="text-2xl font-bold mb-2">Análise de Dados com IA</h2>
                 <p className="text-slate-600 dark:text-slate-400 mb-4">
-                    Clique no botão abaixo para gerar uma análise gerencial resumida da situação atual dos motoristas utilizando a IA do Google.
+                    Clique no botão abaixo para usar a IA do Gemini para analisar os registros de controle diário e extrair insights valiosos.
                 </p>
                 <button
-                    onClick={generateAnalysis}
-                    disabled={isLoading || logs.length === 0}
-                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={handleAnalyze}
+                    disabled={isLoading || controls.length === 0}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 disabled:bg-blue-400 disabled:cursor-not-allowed transition"
                 >
-                    {isLoading ? 'Analisando...' : 'Gerar Análise'}
+                    {isLoading ? 'Analisando...' : 'Analisar Dados'}
                 </button>
-
-                {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
-                
-                {analysis && (
-                    <div className="mt-6 p-4 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                        <h3 className="font-semibold text-slate-900 dark:text-white mb-2">Resultado da Análise:</h3>
-                        <pre className="whitespace-pre-wrap font-sans text-slate-700 dark:text-slate-300">{analysis}</pre>
-                    </div>
-                )}
             </div>
-        </div>
+
+            {error && <p className="mt-4 text-red-500 text-center">{error}</p>}
+            
+            {isLoading && (
+                <div className="mt-8 text-center p-6 bg-white dark:bg-slate-800 rounded-lg shadow-md">
+                    <p className="text-slate-600 dark:text-slate-400">Analisando dados... Isso pode levar alguns segundos.</p>
+                </div>
+            )}
+
+            {analysis && (
+                <div className="mt-8 bg-white dark:bg-slate-800 p-6 rounded-lg shadow-md">
+                    <h3 className="text-xl font-bold mb-4">Resultado da Análise</h3>
+                    <div
+                        className="prose prose-slate dark:prose-invert max-w-none space-y-4"
+                        dangerouslySetInnerHTML={{ __html: analysisHtml }}
+                    />
+                </div>
+            )}
+        </section>
     );
 };

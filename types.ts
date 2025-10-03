@@ -1,14 +1,10 @@
-// Fix: Defined the DailyLog interface for type safety across the application.
-import { Timestamp } from 'firebase/firestore';
+// Fix: Defines the core data structures used throughout the application.
+export type DriverStatus = 'Liberado' | 'Bloqueado' | 'Afastado' | 'Férias';
 
-export interface DailyLog {
-  id: string;
-  userId: string;
-  driverName: string;
-  statusGeral: string;
-  statusViagem: string | null;
-  horaExtra: string;
-  observacao: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+export interface DailyControl {
+    id: string;
+    driverName: string;
+    date: string;
+    status: DriverStatus;
+    observation: string;
 }
