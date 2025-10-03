@@ -17,16 +17,18 @@ export const DriverRow: React.FC<DriverRowProps> = ({ record, onUpdate, onDelete
   };
 
   const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat('pt-BR').format(date);
+    // Adiciona verificação para garantir que 'date' é um objeto Date válido
+    if (!(date instanceof Date) || isNaN(date.getTime())) {
+        return 'Data inválida';
+    }
+    return new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(date);
   };
 
   return (
     <tr className="bg-white border-b dark:bg-slate-800 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 text-sm">
-      <td className="px-3 py-2 font-medium text-slate-900 dark:text-white whitespace-nowrap" style={{ minWidth: '200px' }}>
+      <td className="px-3 py-2 font-medium text-slate-900 dark:text-white whitespace-nowrap" style={{ minWidth: '250px' }}>
         {record.motorista}
       </td>
-      <td className="px-3 py-2">{formatDate(record.data)}</td>
-      <td className="px-3 py-2">{record.gestor}</td>
       <td className="px-3 py-2" style={{ minWidth: '150px' }}>
         <input
           type="text"
@@ -42,7 +44,7 @@ export const DriverRow: React.FC<DriverRowProps> = ({ record, onUpdate, onDelete
           onChange={(e) => handleChange('status', e.target.value)}
         />
       </td>
-       <td className="px-3 py-2" style={{ minWidth: '180px' }}>
+      <td className="px-3 py-2" style={{ minWidth: '180px' }}>
         <SelectInput
           options={STATUS_VIAGEM_OPCOES}
           value={record.statusViagem}
@@ -70,6 +72,7 @@ export const DriverRow: React.FC<DriverRowProps> = ({ record, onUpdate, onDelete
           onChange={(e) => handleChange('justificativaJornada', e.target.value)}
           rows={1}
           className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 dark:bg-slate-700 dark:border-slate-600 dark:text-white"
+          placeholder="Justificativa Jornada > 7 Dias"
         />
       </td>
       <td className="px-3 py-2">
