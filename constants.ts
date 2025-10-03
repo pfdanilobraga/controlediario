@@ -1,6 +1,14 @@
-// Fix: Defines constants used across the application, such as status options and database collection names.
-import { DriverStatus } from './types';
+// constants.ts
 
-export const DRIVER_STATUSES: DriverStatus[] = ['Liberado', 'Bloqueado', 'Afastado', 'Férias'];
+export const STATUS_OPCOES = [
+  'JORNADA', 'FOLGA NA ESTRADA', 'FOLGA EM CASA', 'FÉRIAS', 'ATESTADO',
+  'FALTA', 'SUSPENSÃO', 'LICENÇA PATERNIDADE', 'LICENÇA LUTO', 'DESLIGADO', 'AFASTADO'
+];
 
-export const FIRESTORE_COLLECTION = 'dailyControls';
+export const STATUS_VIAGEM_OPCOES = [
+  'EM VIAGEM', 'EM CARREGAMENTO', 'EM DESCARGA'
+];
+
+export const HORA_EXTRA_OPCOES = [
+  'AUTORIZADO', 'NÃO AUTORIZADO'
+];
