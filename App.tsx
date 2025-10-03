@@ -1,13 +1,21 @@
 
+
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, onSnapshot, doc, updateDoc, deleteDoc, query, orderBy, addDoc, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, query, orderBy, addDoc, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 import { useAuth } from './hooks/useAuth';
 import { Header } from './components/Header';
 import { DriverRow } from './components/DriverRow';
 import type { Driver } from './types';
 import { DriverGeneralStatus, TripStatus, OvertimeStatus } from './types';
-import { Search, PlusCircle } from 'lucide-react';
+import { Search, PlusCircle, Save } from 'lucide-react';
+
+// Helper to get date at midnight in UTC for consistent querying
+const getStartOfDay = (date: Date) => {
+    const d = new Date(date);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+};
 
 function App() {
   const { user, logout } = useAuth();
@@ -15,12 +23,17 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDate, setSelectedDate] = useState(new Date());
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const driversCollection = collection(db, 'drivers');
-    const q = query(driversCollection, orderBy('motorista'));
+
+    const startOfDay = getStartOfDay(selectedDate);
+    
+    // Firestore query for records on the selected date
+    const recordsCollection = collection(db, 'daily_records');
+    const q = query(recordsCollection, where("data", "==", Timestamp.fromDate(startOfDay)), orderBy('motorista'));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const driverList = snapshot.docs.map(doc => {
@@ -28,40 +41,35 @@ function App() {
             return {
                 id: doc.id,
                 ...data,
-                // Safely convert Firestore Timestamp to JS Date
                 data: (data.data as Timestamp)?.toDate() || new Date(),
             } as Driver;
         });
         setDrivers(driverList);
         setLoading(false);
     }, (err) => {
-        console.error("Error fetching drivers:", err);
-        setError('Falha ao carregar os dados dos motoristas.');
+        console.error("Error fetching daily records:", err);
+        setError('Falha ao carregar os dados dos motoristas para esta data.');
         setLoading(false);
     });
 
-    // Cleanup subscription on unmount
     return () => unsubscribe();
-  }, []);
+  }, [selectedDate]); // Re-run effect when selectedDate changes
 
-  const handleUpdateDriver = async (updatedDriver: Driver) => {
-    try {
-      const driverRef = doc(db, 'drivers', updatedDriver.id);
-      const { id, ...dataToUpdate } = updatedDriver;
-      await updateDoc(driverRef, dataToUpdate);
-    } catch (err) {
-      console.error("Error updating driver:", err);
-      setError('Falha ao atualizar o motorista.');
-    }
+  // This will be used in the next step with the "Save All" button
+  const handleLocalUpdate = (updatedDriver: Driver) => {
+    setDrivers(prevDrivers => 
+        prevDrivers.map(d => d.id === updatedDriver.id ? updatedDriver : d)
+    );
   };
 
   const handleDeleteDriver = async (driverId: string) => {
-    if (window.confirm('Tem certeza que deseja excluir este motorista?')) {
+    if (window.confirm('Tem certeza que deseja excluir este registro diário do motorista?')) {
         try {
-            await deleteDoc(doc(db, 'drivers', driverId));
+            // Note: This deletes the daily record, not the driver themselves.
+            await deleteDoc(doc(db, 'daily_records', driverId));
         } catch (err) {
-            console.error("Error deleting driver:", err);
-            setError('Falha ao excluir o motorista.');
+            console.error("Error deleting record:", err);
+            setError('Falha ao excluir o registro.');
         }
     }
   };
@@ -71,13 +79,11 @@ function App() {
       const gestor = window.prompt("Nome do gestor:");
       if (motorista && gestor) {
           try {
-              const today = new Date();
-              today.setHours(0, 0, 0, 0); // Set to midnight to represent the calendar day
-
+              const startOfDay = getStartOfDay(selectedDate);
               const newDriverData = {
                   motorista,
                   gestor,
-                  data: today, // Store as a Date object, Firestore will convert to Timestamp
+                  data: Timestamp.fromDate(startOfDay),
                   status: DriverGeneralStatus.JORNADA,
                   alteracaoStatus: DriverGeneralStatus.JORNADA,
                   justificativaAlteracaoStatus: '',
@@ -86,12 +92,19 @@ function App() {
                   horaExtra: OvertimeStatus.NAO_AUTORIZADO,
                   justificativaHoraExtra: '',
               };
-              await addDoc(collection(db, 'drivers'), newDriverData);
+              await addDoc(collection(db, 'daily_records'), newDriverData);
           } catch (err) {
-              console.error("Error adding driver:", err);
-              setError('Falha ao adicionar novo motorista.');
+              console.error("Error adding driver record:", err);
+              setError('Falha ao adicionar novo registro de motorista.');
           }
       }
+  };
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const date = new Date(e.target.value);
+      // Adjust for timezone offset to get the correct calendar day
+      const timezoneOffset = date.getTimezoneOffset() * 60000;
+      setSelectedDate(new Date(date.getTime() + timezoneOffset));
   };
   
   const filteredDrivers = drivers.filter(driver =>
@@ -106,28 +119,38 @@ function App() {
 
         <main className="mt-8 bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
           <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-              <div className="relative w-full sm:max-w-xs">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Search className="h-5 w-5 text-slate-400" />
-                  </div>
-                  <input
-                      type="text"
-                      placeholder="Buscar por motorista ou gestor..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600"
-                  />
+              <div className="flex flex-col sm:flex-row gap-4 w-full">
+                <div className="relative w-full sm:max-w-xs">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Search className="h-5 w-5 text-slate-400" />
+                    </div>
+                    <input
+                        type="text"
+                        placeholder="Buscar por motorista ou gestor..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600"
+                    />
+                </div>
+                <div>
+                    <input 
+                        type="date"
+                        value={selectedDate.toISOString().split('T')[0]}
+                        onChange={handleDateChange}
+                        className="w-full sm:w-auto px-4 py-2 border border-slate-300 rounded-lg text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600"
+                    />
+                </div>
               </div>
               <button
                   onClick={handleAddDriver}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 transition-colors"
+                  className="w-full sm:w-auto flex-shrink-0 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 transition-colors"
               >
                   <PlusCircle size={18} />
-                  <span>Adicionar Motorista</span>
+                  <span>Adicionar Registro</span>
               </button>
           </div>
 
-          {loading && <p className="text-center text-slate-500 dark:text-slate-400">Carregando motoristas...</p>}
+          {loading && <p className="text-center text-slate-500 dark:text-slate-400">Carregando registros para {selectedDate.toLocaleDateString('pt-BR')}...</p>}
           {error && <p className="text-center text-red-500">{error}</p>}
           
           {!loading && !error && (
@@ -137,12 +160,10 @@ function App() {
                   <tr>
                     <th scope="col" className="px-6 py-3">Motorista</th>
                     <th scope="col" className="px-6 py-3">Gestor</th>
-                    <th scope="col" className="px-6 py-3">Data</th>
                     <th scope="col" className="px-6 py-3">Status Geral</th>
                     <th scope="col" className="px-6 py-3">Alteração de Status</th>
                     <th scope="col" className="px-6 py-3">Status da Viagem</th>
                     <th scope="col" className="px-6 py-3">Hora Extra</th>
-                    <th scope="col" className="px-6 py-3 text-center">Salvo</th>
                     <th scope="col" className="px-6 py-3 text-center">Ações</th>
                   </tr>
                 </thead>
@@ -151,7 +172,7 @@ function App() {
                     <DriverRow
                       key={driver.id}
                       driver={driver}
-                      onUpdate={handleUpdateDriver}
+                      onUpdate={handleLocalUpdate} // Temporarily updates local state
                       onDelete={handleDeleteDriver}
                     />
                   ))}
@@ -159,8 +180,8 @@ function App() {
               </table>
               {filteredDrivers.length === 0 && (
                  <div className="text-center py-16">
-                    <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-200">Lista de motoristas vazia</h3>
-                    <p className="mt-2 text-slate-500 dark:text-slate-400">Comece adicionando seu primeiro motorista usando os campos acima.</p>
+                    <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-200">Nenhum registro encontrado</h3>
+                    <p className="mt-2 text-slate-500 dark:text-slate-400">Não há registros para a data selecionada. Adicione um novo registro para começar.</p>
                 </div>
               )}
             </div>
