@@ -27,7 +27,7 @@ export interface Driver {
     id: string;
     motorista: string;
     gestor: string;
-    data: string;
+    data: Date;
     status: DriverGeneralStatus | string;
     alteracaoStatus: DriverGeneralStatus | string;
     justificativaAlteracaoStatus: string;

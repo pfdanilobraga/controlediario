@@ -1,180 +1,174 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Driver } from './types';
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, query, orderBy, addDoc, Timestamp } from 'firebase/firestore';
+import { db } from './firebase';
+import { useAuth } from './hooks/useAuth';
 import { Header } from './components/Header';
 import { DriverRow } from './components/DriverRow';
-import { PlusCircle, Search } from 'lucide-react';
-import { db } from './firebase';
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, Timestamp } from 'firebase/firestore';
-import { useAuth } from './hooks/useAuth';
+import type { Driver } from './types';
+import { DriverGeneralStatus, TripStatus, OvertimeStatus } from './types';
+import { Search, PlusCircle } from 'lucide-react';
 
-const App: React.FC = () => {
+function App() {
+  const { user, logout } = useAuth();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [newDriverName, setNewDriverName] = useState('');
-  const [newDriverManager, setNewDriverManager] = useState('');
-  const { user, logout } = useAuth();
 
   useEffect(() => {
-    const q = query(collection(db, "drivers"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const driversData: Driver[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        driversData.push({ 
-            ...data, 
-            id: doc.id,
-            data: (data.data as Timestamp).toDate().toISOString().split('T')[0],
-         } as Driver);
-      });
-      setDrivers(driversData);
-      setLoading(false);
+    setLoading(true);
+    setError(null);
+    const driversCollection = collection(db, 'drivers');
+    const q = query(driversCollection, orderBy('motorista'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const driverList = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                ...data,
+                // Safely convert Firestore Timestamp to JS Date
+                data: (data.data as Timestamp)?.toDate() || new Date(),
+            } as Driver;
+        });
+        setDrivers(driverList);
+        setLoading(false);
+    }, (err) => {
+        console.error("Error fetching drivers:", err);
+        setError('Falha ao carregar os dados dos motoristas.');
+        setLoading(false);
     });
 
+    // Cleanup subscription on unmount
     return () => unsubscribe();
   }, []);
 
-
-  const handleDriverUpdate = async (updatedDriver: Driver) => {
-    const { id, ...driverData } = updatedDriver;
-    if (id) {
-        const driverRef = doc(db, "drivers", id);
-        const dataToWrite = {
-            ...driverData,
-            data: new Date(driverData.data + 'T00:00:00'),
-        };
-        await updateDoc(driverRef, dataToWrite);
+  const handleUpdateDriver = async (updatedDriver: Driver) => {
+    try {
+      const driverRef = doc(db, 'drivers', updatedDriver.id);
+      const { id, ...dataToUpdate } = updatedDriver;
+      await updateDoc(driverRef, dataToUpdate);
+    } catch (err) {
+      console.error("Error updating driver:", err);
+      setError('Falha ao atualizar o motorista.');
     }
   };
 
-  const handleDriverDelete = async (driverId: string) => {
-    if (window.confirm("Você tem certeza que deseja excluir este motorista? Esta ação não pode ser desfeita.")) {
-      try {
-        await deleteDoc(doc(db, "drivers", driverId));
-      } catch (error) {
-        console.error("Erro ao excluir motorista: ", error);
-        alert("Ocorreu um erro ao tentar excluir o motorista. Por favor, tente novamente.");
-      }
+  const handleDeleteDriver = async (driverId: string) => {
+    if (window.confirm('Tem certeza que deseja excluir este motorista?')) {
+        try {
+            await deleteDoc(doc(db, 'drivers', driverId));
+        } catch (err) {
+            console.error("Error deleting driver:", err);
+            setError('Falha ao excluir o motorista.');
+        }
     }
   };
 
   const handleAddDriver = async () => {
-    if (newDriverName.trim() === '' || newDriverManager.trim() === '') {
-        alert('Por favor, preencha o nome do motorista e do gestor.');
-        return;
-    }
-    const newDriver = {
-        motorista: newDriverName.trim(),
-        gestor: newDriverManager.trim(),
-        data: new Date(),
-        status: 'JORNADA',
-        alteracaoStatus: 'JORNADA',
-        justificativaAlteracaoStatus: '',
-        statusViagem: 'EM VIAGEM',
-        justificativaStatusViagem: '',
-        horaExtra: 'NÃO AUTORIZADO',
-        justificativaHoraExtra: '',
-        createdAt: serverTimestamp(),
-    };
-    await addDoc(collection(db, "drivers"), newDriver);
-    setNewDriverName('');
-    setNewDriverManager('');
-  };
+      const motorista = window.prompt("Nome do novo motorista:");
+      const gestor = window.prompt("Nome do gestor:");
+      if (motorista && gestor) {
+          try {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0); // Set to midnight to represent the calendar day
 
-  const filteredDrivers = useMemo(() => {
-    return drivers.filter(driver =>
-      driver.motorista.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      driver.gestor.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [drivers, searchTerm]);
+              const newDriverData = {
+                  motorista,
+                  gestor,
+                  data: today, // Store as a Date object, Firestore will convert to Timestamp
+                  status: DriverGeneralStatus.JORNADA,
+                  alteracaoStatus: DriverGeneralStatus.JORNADA,
+                  justificativaAlteracaoStatus: '',
+                  statusViagem: TripStatus.EM_VIAGEM,
+                  justificativaStatusViagem: '',
+                  horaExtra: OvertimeStatus.NAO_AUTORIZADO,
+                  justificativaHoraExtra: '',
+              };
+              await addDoc(collection(db, 'drivers'), newDriverData);
+          } catch (err) {
+              console.error("Error adding driver:", err);
+              setError('Falha ao adicionar novo motorista.');
+          }
+      }
+  };
+  
+  const filteredDrivers = drivers.filter(driver =>
+    driver.motorista.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    driver.gestor.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
-    <div className="min-h-screen text-slate-800 dark:text-slate-200">
+    <div className="bg-slate-100 dark:bg-slate-900 min-h-screen">
       <div className="container mx-auto p-4 sm:p-6 lg:p-8">
         <Header user={user} onLogout={logout} />
 
-        <div className="mt-8 bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-xl shadow-lg">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-             <div className="relative md:col-span-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Buscar motorista ou gestor..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-              />
-            </div>
-            <div className="flex flex-col sm:flex-row md:col-span-2 gap-4">
-              <input
-                type="text"
-                placeholder="Nome do novo motorista"
-                value={newDriverName}
-                onChange={(e) => setNewDriverName(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-              />
-              <input
-                type="text"
-                placeholder="Nome do gestor"
-                value={newDriverManager}
-                onChange={(e) => setNewDriverManager(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-              />
+        <main className="mt-8 bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
+          <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+              <div className="relative w-full sm:max-w-xs">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Search className="h-5 w-5 text-slate-400" />
+                  </div>
+                  <input
+                      type="text"
+                      placeholder="Buscar por motorista ou gestor..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600"
+                  />
+              </div>
               <button
-                onClick={handleAddDriver}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 transition-colors"
+                  onClick={handleAddDriver}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 transition-colors"
               >
-                <PlusCircle className="h-5 w-5" />
-                <span>Adicionar</span>
+                  <PlusCircle size={18} />
+                  <span>Adicionar Motorista</span>
               </button>
+          </div>
+
+          {loading && <p className="text-center text-slate-500 dark:text-slate-400">Carregando motoristas...</p>}
+          {error && <p className="text-center text-red-500">{error}</p>}
+          
+          {!loading && !error && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-slate-500 dark:text-slate-400">
+                <thead className="text-xs text-slate-700 uppercase bg-slate-50 dark:bg-slate-700 dark:text-slate-400">
+                  <tr>
+                    <th scope="col" className="px-6 py-3">Motorista</th>
+                    <th scope="col" className="px-6 py-3">Gestor</th>
+                    <th scope="col" className="px-6 py-3">Data</th>
+                    <th scope="col" className="px-6 py-3">Status Geral</th>
+                    <th scope="col" className="px-6 py-3">Alteração de Status</th>
+                    <th scope="col" className="px-6 py-3">Status da Viagem</th>
+                    <th scope="col" className="px-6 py-3">Hora Extra</th>
+                    <th scope="col" className="px-6 py-3 text-center">Salvo</th>
+                    <th scope="col" className="px-6 py-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDrivers.map((driver) => (
+                    <DriverRow
+                      key={driver.id}
+                      driver={driver}
+                      onUpdate={handleUpdateDriver}
+                      onDelete={handleDeleteDriver}
+                    />
+                  ))}
+                </tbody>
+              </table>
+              {filteredDrivers.length === 0 && (
+                 <div className="text-center py-16">
+                    <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-200">Lista de motoristas vazia</h3>
+                    <p className="mt-2 text-slate-500 dark:text-slate-400">Comece adicionando seu primeiro motorista usando os campos acima.</p>
+                </div>
+              )}
             </div>
-          </div>
-        
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-slate-700 uppercase bg-slate-50 dark:bg-slate-700 dark:text-slate-400">
-                <tr>
-                  <th scope="col" className="px-6 py-3 min-w-[150px]">Motorista</th>
-                  <th scope="col" className="px-6 py-3 min-w-[150px]">Gestor</th>
-                  <th scope="col" className="px-6 py-3 min-w-[120px]">Data</th>
-                  <th scope="col" className="px-6 py-3 min-w-[200px]">Status</th>
-                  <th scope="col" className="px-6 py-3 min-w-[250px]">Alteração Status / Justificativa</th>
-                  <th scope="col" className="px-6 py-3 min-w-[250px]">Status Viagem / Justificativa</th>
-                  <th scope="col" className="px-6 py-3 min-w-[250px]">Hora Extra / Justificativa</th>
-                  <th scope="col" className="px-6 py-3 min-w-[150px]">Status da Ação</th>
-                  <th scope="col" className="px-6 py-3 text-center">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                    <tr>
-                        <td colSpan={9} className="text-center py-10 text-slate-500 dark:text-slate-400">
-                            Carregando motoristas...
-                        </td>
-                    </tr>
-                ) : filteredDrivers.length > 0 ? (
-                    filteredDrivers.map(driver => (
-                        <DriverRow 
-                            key={driver.id} 
-                            driver={driver} 
-                            onUpdate={handleDriverUpdate} 
-                            onDelete={handleDriverDelete}
-                        />
-                    ))
-                ) : (
-                    <tr>
-                       <td colSpan={9} className="text-center py-10 text-slate-500 dark:text-slate-400">
-                            <p>Nenhum motorista encontrado.</p>
-                        </td>
-                    </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+          )}
+        </main>
       </div>
     </div>
   );
-};
+}
 
 export default App;

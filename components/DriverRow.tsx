@@ -63,7 +63,7 @@ export const DriverRow: React.FC<DriverRowProps> = ({ driver, onUpdate, onDelete
     <tr className="bg-white dark:bg-slate-800 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600/50 transition-colors">
       <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">{driver.motorista}</td>
       <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{driver.gestor}</td>
-      <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{new Date(driver.data + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
+      <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{driver.data.toLocaleDateString('pt-BR')}</td>
       <td className="px-6 py-4">
         <SelectInput
           value={updatedDriver.status}
