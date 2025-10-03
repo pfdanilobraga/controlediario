@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, getDocs, writeBatch, query, where, orderBy, Timestamp } from 'firebase/firestore';
+// FIX: Import `doc` from `firebase/firestore` to resolve the "Cannot find name 'doc'" error.
+import { collection, getDocs, writeBatch, query, where, orderBy, Timestamp, doc } from 'firebase/firestore';
 import { db } from './firebase';
 import { useAuth } from './hooks/useAuth';
 import { DailyRecord } from './types';
