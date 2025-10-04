@@ -1,115 +1,134 @@
 import React, { useState, useEffect } from 'react';
-import { DailyRecord, Motorista } from '../types';
+import { doc, setDoc, Timestamp } from 'firebase/firestore';
+import { db } from '../firebase';
+import { DailyRecord } from '../types';
+import { useAuth } from '../hooks/useAuth';
 import { SelectInput } from './SelectInput';
 import { TextAreaInput } from './TextAreaInput';
 import { STATUS_OPCOES, STATUS_VIAGEM_OPCOES, HORA_EXTRA_OPCOES } from '../constants';
+import { Save, CheckCircle } from 'lucide-react';
 
 interface DriverRowProps {
-  driver: Motorista;
   record: DailyRecord;
-  onRecordChange: (driverId: string, updatedRecord: Partial<DailyRecord>) => void;
+  onUpdate: (record: DailyRecord) => void;
 }
 
-export const DriverRow: React.FC<DriverRowProps> = ({ driver, record, onRecordChange }) => {
-  const [currentRecord, setCurrentRecord] = useState(record);
-  
-  useEffect(() => {
-    setCurrentRecord(record);
-  }, [record]);
+export const DriverRow: React.FC<DriverRowProps> = ({ record, onUpdate }) => {
+    const { user } = useAuth();
+    const [isSaving, setIsSaving] = useState(false);
+    const [isSaved, setIsSaved] = useState(false);
+    const [formData, setFormData] = useState<DailyRecord>(record);
+    const [isDirty, setIsDirty] = useState(false);
 
-  const handleFieldChange = (field: keyof DailyRecord, value: any) => {
-    const updatedRecordState = { ...currentRecord, [field]: value };
-    const changes: Partial<DailyRecord> = { [field]: value };
-    
-    if (field === 'status' && !['ATESTADO', 'FALTA', 'SUSPENSÃO'].includes(value)) {
-        if(currentRecord.justificativaAlteracaoStatus) {
-            changes.justificativaAlteracaoStatus = '';
-            updatedRecordState.justificativaAlteracaoStatus = '';
-        }
-    }
-    if (field === 'statusViagem' && value === 'EM VIAGEM') {
-        if (currentRecord.justificativaStatusViagem) {
-            changes.justificativaStatusViagem = '';
-            updatedRecordState.justificativaStatusViagem = '';
-        }
-    }
-    if (field === 'horaExtra' && value === 'NÃO AUTORIZADO') {
-        if (currentRecord.justificativaHoraExtra) {
-            changes.justificativaHoraExtra = '';
-            updatedRecordState.justificativaHoraExtra = '';
-        }
-    }
-    
-    setCurrentRecord(updatedRecordState);
-    onRecordChange(driver.id, changes);
-  };
-  
-  const requiresJustification = (field: 'status' | 'statusViagem' | 'horaExtra', value: string) => {
-    switch (field) {
-        case 'status':
-            return ['ATESTADO', 'FALTA', 'SUSPENSÃO'].includes(value);
-        case 'statusViagem':
-            return value !== 'EM VIAGEM';
-        case 'horaExtra':
-            return value === 'AUTORIZADO';
-        default:
-            return false;
-    }
-  }
+    useEffect(() => {
+        setFormData(record);
+        setIsDirty(false); // Reset dirty state when props change
+    }, [record]);
 
-  return (
-    <tr className="bg-white border-b dark:bg-slate-800 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600">
-      <td className="px-6 py-4 font-medium text-slate-900 dark:text-white whitespace-nowrap">
-        {driver.nome}
-      </td>
-      <td className="px-6 py-4">
-        <SelectInput
-          value={currentRecord.status || ''}
-          onChange={(e) => handleFieldChange('status', e.target.value)}
-          options={STATUS_OPCOES}
-        />
-      </td>
-      <td className="px-6 py-4">
-        {requiresJustification('status', currentRecord.status) && (
-          <TextAreaInput
-            placeholder="Justificativa..."
-            value={currentRecord.justificativaAlteracaoStatus || ''}
-            onChange={(e) => handleFieldChange('justificativaAlteracaoStatus', e.target.value)}
-          />
-        )}
-      </td>
-      <td className="px-6 py-4">
-        <SelectInput
-          value={currentRecord.statusViagem || ''}
-          onChange={(e) => handleFieldChange('statusViagem', e.target.value)}
-          options={STATUS_VIAGEM_OPCOES}
-        />
-      </td>
-      <td className="px-6 py-4">
-        {requiresJustification('statusViagem', currentRecord.statusViagem) && (
-          <TextAreaInput
-            placeholder="Justificativa..."
-            value={currentRecord.justificativaStatusViagem || ''}
-            onChange={(e) => handleFieldChange('justificativaStatusViagem', e.target.value)}
-          />
-        )}
-      </td>
-      <td className="px-6 py-4">
-        <SelectInput
-          value={currentRecord.horaExtra || ''}
-          onChange={(e) => handleFieldChange('horaExtra', e.target.value)}
-          options={HORA_EXTRA_OPCOES}
-        />
-      </td>
-      <td className="px-6 py-4">
-        {requiresJustification('horaExtra', currentRecord.horaExtra) && (
-          <TextAreaInput
-            placeholder="Justificativa..."
-            value={currentRecord.justificativaHoraExtra || ''}
-            onChange={(e) => handleFieldChange('justificativaHoraExtra', e.target.value)}
-          />
-        )}
-      </td>
-    </tr>
-  );
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+        setIsDirty(true);
+        setIsSaved(false);
+    };
+
+    const handleSave = async () => {
+        if (!user || !isDirty) return;
+        setIsSaving(true);
+        try {
+            const recordToSave = {
+                ...formData,
+                lastModifiedBy: user.email,
+                data: Timestamp.fromDate(new Date(formData.data))
+            };
+            const recordRef = doc(db, 'dailyRecords', record.id);
+            await setDoc(recordRef, recordToSave);
+            onUpdate(formData);
+            setIsDirty(false);
+            setIsSaved(true);
+            setTimeout(() => setIsSaved(false), 2000); // Hide confirmation after 2s
+        } catch (error) {
+            console.error("Error saving record:", error);
+            // Handle error UI if needed
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const needsJustification = (field: keyof DailyRecord, value: string) => {
+        if (field === 'status' && value !== 'JORNADA' && value !== 'FOLGA NA ESTRADA' && value !== 'FOLGA EM CASA') return true;
+        if (field === 'statusViagem' && value !== 'EM VIAGEM') return true;
+        if (field === 'horaExtra' && value === 'AUTORIZADO') return true;
+        return false;
+    };
+
+    return (
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-md transition-all duration-300 hover:shadow-lg">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center">
+                <div>
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">{formData.motorista}</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Gestor: {formData.gestor}</p>
+                </div>
+                <div className="flex items-center gap-4 mt-2 md:mt-0">
+                    {isDirty && (
+                        <button
+                            onClick={handleSave}
+                            disabled={isSaving}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-400"
+                        >
+                            <Save className="h-4 w-4" />
+                            {isSaving ? 'Salvando...' : 'Salvar Alterações'}
+                        </button>
+                    )}
+                    {isSaved && (
+                         <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                            <CheckCircle className="h-5 w-5" />
+                            <span>Salvo!</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                {/* Placas */}
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Placas</label>
+                    <input
+                        type="text"
+                        name="placas"
+                        value={formData.placas || ''}
+                        onChange={handleChange}
+                        className="mt-1 w-full bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 dark:bg-slate-700 dark:border-slate-600 dark:placeholder-slate-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500 transition"
+                    />
+                </div>
+                
+                {/* Status */}
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Status</label>
+                    <SelectInput name="status" options={STATUS_OPCOES} value={formData.status} onChange={handleChange} />
+                    {needsJustification('status', formData.status) && (
+                        <TextAreaInput name="justificativaAlteracaoStatus" placeholder="Justificativa para status" value={formData.justificativaAlteracaoStatus || ''} onChange={handleChange} className="mt-2" />
+                    )}
+                </div>
+
+                {/* Status Viagem */}
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Status da Viagem</label>
+                    <SelectInput name="statusViagem" options={STATUS_VIAGEM_OPCOES} value={formData.statusViagem} onChange={handleChange} />
+                    {needsJustification('statusViagem', formData.statusViagem) && (
+                         <TextAreaInput name="justificativaStatusViagem" placeholder="Justificativa para status da viagem" value={formData.justificativaStatusViagem || ''} onChange={handleChange} className="mt-2" />
+                    )}
+                </div>
+
+                 {/* Hora Extra */}
+                 <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Hora Extra</label>
+                    <SelectInput name="horaExtra" options={HORA_EXTRA_OPCOES} value={formData.horaExtra} onChange={handleChange} />
+                    {needsJustification('horaExtra', formData.horaExtra) && (
+                         <TextAreaInput name="justificativaHoraExtra" placeholder="Justificativa para hora extra" value={formData.justificativaHoraExtra || ''} onChange={handleChange} className="mt-2" />
+                    )}
+                </div>
+            </div>
+        </div>
+    );
 };

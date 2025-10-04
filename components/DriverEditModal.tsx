@@ -1,140 +1,152 @@
-import React from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import React, { useState, useEffect } from 'react';
 import { Motorista, Gestor } from '../types';
-import { db } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
-import { Save, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 interface DriverEditModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (driver: Motorista) => void;
   driver: Motorista | null;
+  gestores: Gestor[];
+  onSave: (driver: Motorista) => void;
+  onClose: () => void;
 }
 
-type FormData = Omit<Motorista, 'id' | 'dataAdmissao' | 'dataDemissao' | 'feriasInicio' | 'feriasFim'> & {
-    dataAdmissao?: string;
-    dataDemissao?: string;
-    feriasInicio?: string;
-    feriasFim?: string;
-};
-
-
-export const DriverEditModal: React.FC<DriverEditModalProps> = ({ isOpen, onClose, onSave, driver }) => {
-  const { register, handleSubmit, control, watch, formState: { errors } } = useForm<FormData>({
-    defaultValues: {
-      nome: driver?.nome || '',
-      gestor: driver?.gestor || '',
-      statusEmprego: driver?.statusEmprego || 'ATIVO',
-      dataAdmissao: driver?.dataAdmissao ? new Date(driver.dataAdmissao).toISOString().split('T')[0] : '',
-      dataDemissao: driver?.dataDemissao ? new Date(driver.dataDemissao).toISOString().split('T')[0] : '',
-      feriasInicio: driver?.feriasInicio ? new Date(driver.feriasInicio).toISOString().split('T')[0] : '',
-      feriasFim: driver?.feriasFim ? new Date(driver.feriasFim).toISOString().split('T')[0] : '',
-      observacoes: driver?.observacoes || '',
-    }
+export const DriverEditModal: React.FC<DriverEditModalProps> = ({ driver, gestores, onSave, onClose }) => {
+  const [formData, setFormData] = useState<Partial<Motorista>>({
+    nome: '',
+    gestor: '',
+    statusEmprego: 'ATIVO',
+    dataAdmissao: null,
+    dataDemissao: null,
+    feriasInicio: null,
+    feriasFim: null,
+    observacoes: '',
   });
 
-  const [gestores, setGestores] = React.useState<Gestor[]>([]);
-  const statusEmprego = watch('statusEmprego');
-
-  React.useEffect(() => {
-    const fetchGestores = async () => {
-      const querySnapshot = await getDocs(collection(db, 'gestores'));
-      const gestoresList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Gestor));
-      setGestores(gestoresList);
-    };
-    if (isOpen) {
-      fetchGestores();
+  useEffect(() => {
+    if (driver) {
+      setFormData({
+        ...driver,
+        dataAdmissao: driver.dataAdmissao ? new Date(driver.dataAdmissao) : null,
+        dataDemissao: driver.dataDemissao ? new Date(driver.dataDemissao) : null,
+        feriasInicio: driver.feriasInicio ? new Date(driver.feriasInicio) : null,
+        feriasFim: driver.feriasFim ? new Date(driver.feriasFim) : null,
+      });
+    } else {
+      setFormData({
+        nome: '',
+        gestor: gestores.length > 0 ? gestores[0].nome : '',
+        statusEmprego: 'ATIVO',
+        dataAdmissao: new Date(),
+        dataDemissao: null,
+        feriasInicio: null,
+        feriasFim: null,
+        observacoes: '',
+      });
     }
-  }, [isOpen]);
+  }, [driver, gestores]);
 
-  if (!isOpen) return null;
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+  
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    // Handle empty date input
+    if (value) {
+        const date = new Date(value);
+        // Adjust for timezone offset to store the correct date
+        date.setMinutes(date.getMinutes() + date.getTimezoneOffset());
+        setFormData(prev => ({ ...prev, [name]: date }));
+    } else {
+        setFormData(prev => ({ ...prev, [name]: null }));
+    }
+  };
 
-  const onSubmit = (data: FormData) => {
-    onSave({
-      ...data,
-      id: driver?.id || '',
-      dataAdmissao: data.dataAdmissao ? new Date(data.dataAdmissao) : null,
-      dataDemissao: data.dataDemissao ? new Date(data.dataDemissao) : null,
-      feriasInicio: data.feriasInicio ? new Date(data.feriasInicio) : null,
-      feriasFim: data.feriasFim ? new Date(data.feriasFim) : null,
-    });
-    onClose();
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.nome || !formData.gestor) {
+      alert('Nome e gestor são obrigatórios.');
+      return;
+    }
+    const driverToSave: Motorista = {
+      id: driver?.id || '', // Let parent component handle ID generation for new drivers
+      nome: formData.nome!,
+      gestor: formData.gestor!,
+      statusEmprego: formData.statusEmprego!,
+      dataAdmissao: formData.dataAdmissao || null,
+      dataDemissao: formData.dataDemissao || null,
+      feriasInicio: formData.feriasInicio || null,
+      feriasFim: formData.feriasFim || null,
+      observacoes: formData.observacoes || '',
+    };
+    onSave(driverToSave);
+  };
+  
+  const formatDateForInput = (date: Date | null | undefined) => {
+    if (!date) return '';
+    const d = new Date(date);
+    return d.toISOString().split('T')[0];
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4">
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-lg max-h-full overflow-y-auto">
-        <form onSubmit={handleSubmit(onSubmit)} className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-              {driver ? 'Editar Motorista' : 'Adicionar Motorista'}
-            </h2>
-            <button type="button" onClick={onClose} className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white">
-              <X className="h-6 w-6" />
-            </button>
-          </div>
-          <div className="space-y-4">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center p-4 border-b dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 z-10">
+          <h2 className="text-xl font-bold">{driver ? 'Editar Motorista' : 'Adicionar Novo Motorista'}</h2>
+          <button onClick={onClose} className="p-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700">
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            {/* Form Fields */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label htmlFor="nome" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Nome Completo</label>
+                    <input type="text" name="nome" id="nome" value={formData.nome} onChange={handleChange} required className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600"/>
+                </div>
+                <div>
+                    <label htmlFor="gestor" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Gestor Responsável</label>
+                    <select name="gestor" id="gestor" value={formData.gestor} onChange={handleChange} required className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600">
+                        {gestores.map(g => <option key={g.id} value={g.nome}>{g.nome}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="statusEmprego" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Status do Emprego</label>
+                    <select name="statusEmprego" id="statusEmprego" value={formData.statusEmprego} onChange={handleChange} required className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600">
+                        <option value="ATIVO">ATIVO</option>
+                        <option value="DESLIGADO">DESLIGADO</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="dataAdmissao" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Data de Admissão</label>
+                    <input type="date" name="dataAdmissao" id="dataAdmissao" value={formatDateForInput(formData.dataAdmissao)} onChange={handleDateChange} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600"/>
+                </div>
+                <div>
+                    <label htmlFor="dataDemissao" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Data de Demissão</label>
+                    <input type="date" name="dataDemissao" id="dataDemissao" value={formatDateForInput(formData.dataDemissao)} onChange={handleDateChange} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600"/>
+                </div>
+                <div>
+                    <label htmlFor="feriasInicio" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Início das Férias</label>
+                    <input type="date" name="feriasInicio" id="feriasInicio" value={formatDateForInput(formData.feriasInicio)} onChange={handleDateChange} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600"/>
+                </div>
+                 <div>
+                    <label htmlFor="feriasFim" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Fim das Férias</label>
+                    <input type="date" name="feriasFim" id="feriasFim" value={formatDateForInput(formData.feriasFim)} onChange={handleDateChange} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600"/>
+                </div>
+            </div>
             <div>
-              <label htmlFor="nome" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do Motorista</label>
-              <input {...register('nome', { required: 'Nome é obrigatório' })} className="w-full input-style" />
-              {errors.nome && <p className="text-red-500 text-xs mt-1">{errors.nome.message}</p>}
+                <label htmlFor="observacoes" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Observações</label>
+                <textarea name="observacoes" id="observacoes" value={formData.observacoes} onChange={handleChange} rows={3} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-slate-700 dark:border-slate-600"></textarea>
             </div>
-            
-            <div>
-              <label htmlFor="gestor" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Gestor Responsável</label>
-              <select {...register('gestor', { required: 'Gestor é obrigatório' })} className="w-full input-style">
-                <option value="">-- Selecione um Gestor --</option>
-                {gestores.map(g => <option key={g.id} value={g.nome}>{g.nome}</option>)}
-              </select>
-               {errors.gestor && <p className="text-red-500 text-xs mt-1">{errors.gestor.message}</p>}
+          
+            <div className="flex justify-end gap-4 pt-4">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-200 rounded-md hover:bg-slate-300 dark:bg-slate-600 dark:text-slate-200 dark:hover:bg-slate-500">
+                Cancelar
+              </button>
+              <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+                Salvar
+              </button>
             </div>
-
-            <div>
-              <label htmlFor="statusEmprego" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status</label>
-              <select {...register('statusEmprego')} className="w-full input-style">
-                <option value="ATIVO">ATIVO</option>
-                <option value="DESLIGADO">DESLIGADO</option>
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-               <div>
-                <label htmlFor="dataAdmissao" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data de Admissão</label>
-                <input type="date" {...register('dataAdmissao')} className="w-full input-style" />
-              </div>
-              <div>
-                <label htmlFor="dataDemissao" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data de Demissão</label>
-                <input type="date" {...register('dataDemissao')} className="w-full input-style" disabled={statusEmprego !== 'DESLIGADO'} />
-              </div>
-            </div>
-            
-             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-               <div>
-                <label htmlFor="feriasInicio" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Início Férias</label>
-                <input type="date" {...register('feriasInicio')} className="w-full input-style" />
-              </div>
-              <div>
-                <label htmlFor="ferim" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fim Férias</label>
-                <input type="date" {...register('feriasFim')} className="w-full input-style" />
-              </div>
-            </div>
-
-             <div>
-                <label htmlFor="observacoes" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Observações</label>
-                <textarea {...register('observacoes')} rows={3} className="w-full input-style" />
-            </div>
-
-          </div>
-          <div className="mt-8 flex justify-end gap-3">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md text-slate-700 dark:text-slate-200 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500">
-              Cancelar
-            </button>
-            <button type="submit" className="px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-2">
-              <Save className="h-4 w-4" />
-              Salvar
-            </button>
-          </div>
         </form>
       </div>
     </div>
