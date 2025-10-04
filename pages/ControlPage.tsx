@@ -29,7 +29,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
       endOfDay.setUTCHours(23, 59, 59, 999);
 
       let recordsQuery = query(
-        collection(db, 'registros'),
+        collection(db, 'daily_records'),
         where('data', '>=', Timestamp.fromDate(startOfDay)),
         where('data', '<=', Timestamp.fromDate(endOfDay))
       );
@@ -55,7 +55,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
           setAllGestores(gestoresList);
       }
 
-    } catch (error) => {
+    } catch (error) {
       console.error("Error fetching daily records:", error);
     } finally {
       setLoading(false);
@@ -67,7 +67,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
   }, [selectedDate, fetchData]);
   
   const handleUpdateRecord = async (id: string, field: keyof DailyRecord, value: any) => {
-    const recordRef = doc(db, 'registros', id);
+    const recordRef = doc(db, 'daily_records', id);
     try {
       await updateDoc(recordRef, { 
         [field]: value,
@@ -83,7 +83,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
     if (!isAdmin) return;
     if (window.confirm('Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita.')) {
       try {
-        await deleteDoc(doc(db, 'registros', id));
+        await deleteDoc(doc(db, 'daily_records', id));
         setDailyRecords(prev => prev.filter(r => r.id !== id));
       } catch (error) {
         console.error("Error deleting record:", error);
@@ -124,7 +124,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
       const recordDate = new Date(selectedDate.toISOString().split('T')[0] + 'T12:00:00.000Z');
       
       missingDrivers.forEach(driver => {
-        const newRecordRef = doc(collection(db, 'registros'));
+        const newRecordRef = doc(collection(db, 'daily_records'));
         const newRecord: Omit<DailyRecord, 'id'> = {
           motorista: driver.nome,
           data: recordDate,
@@ -255,7 +255,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Status Viagem</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '180px' }}>Hora Extra</th>
                 <th scope="col" className="px-3 py-3" style={{ minWidth: '150px' }}>Dias em Jornada</th>
-                <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>Justificativa Jornada</th>
+                <th scope="col" className="px-3 py-3" style={{ minWidth: '250px' }}>{'Justificativa Jornada > 7 Dias'}</th>
                 <th scope="col" className="px-3 py-3">Ações</th>
               </tr>
             </thead>
