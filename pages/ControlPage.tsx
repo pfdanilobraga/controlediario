@@ -203,7 +203,7 @@ export const ControlPage: React.FC<ControlPageProps> = ({ isAdmin, gestorProfile
               <th scope="col" className="px-3 py-3" style={{minWidth: '180px'}}>Status Viagem</th>
               <th scope="col" className="px-3 py-3" style={{minWidth: '180px'}}>Hora Extra</th>
               <th scope="col" className="px-3 py-3" style={{minWidth: '150px'}}>Dias em Jornada</th>
-              <th scope="col" className="px-3 py-3" style={{minWidth: '250px'}}>Justificativa Jornada > 7 Dias</th>
+              <th scope="col" className="px-3 py-3" style={{minWidth: '250px'}}>{'Justificativa Jornada > 7 Dias'}</th>
               <th scope="col" className="px-3 py-3">Ações</th>
             </tr>
           </thead>
