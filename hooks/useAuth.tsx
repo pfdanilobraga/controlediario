@@ -8,6 +8,7 @@ interface AuthContextType {
     user: User | null;
     loading: boolean;
     gestorProfile: Gestor | null;
+    authError: string | null; // Novo estado para erros de perfil
     login: (email: string, password: string) => Promise<void>;
     logout: () => Promise<void>;
 }
@@ -18,22 +19,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [user, setUser] = useState<User | null>(null);
     const [gestorProfile, setGestorProfile] = useState<Gestor | null>(null);
     const [loading, setLoading] = useState(true);
+    const [authError, setAuthError] = useState<string | null>(null);
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             setUser(user);
+            setAuthError(null); // Limpa erros antigos ao mudar de usuário
+
             if (user && user.email) {
+                 // O administrador não precisa de um perfil de gestor
+                if (user.email === 'adm@adm.com') {
+                    setGestorProfile(null);
+                    setLoading(false);
+                    return;
+                }
+
                 try {
                     const gestorRef = doc(db, 'gestores', user.email);
                     const gestorSnap = await getDoc(gestorRef);
+
                     if (gestorSnap.exists()) {
-                        setGestorProfile({ id: gestorSnap.id, ...gestorSnap.data() } as Gestor);
+                        const gestorData = gestorSnap.data();
+                        if (gestorData.nome && typeof gestorData.nome === 'string') {
+                             setGestorProfile({ id: gestorSnap.id, ...gestorData } as Gestor);
+                        } else {
+                            setAuthError("Perfil de gestor encontrado, mas o campo 'nome' está faltando ou é inválido.");
+                        }
                     } else {
-                        setGestorProfile(null);
+                        setAuthError(`Perfil de gestor não encontrado para o e-mail: ${user.email}.`);
                     }
                 } catch (error) {
-                    console.error("Failed to fetch gestor profile:", error);
-                    setGestorProfile(null);
+                    console.error("Falha ao buscar perfil de gestor:", error);
+                    setAuthError("Ocorreu um erro ao buscar as informações do seu perfil.");
                 }
             } else {
                 setGestorProfile(null);
@@ -55,13 +72,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         user,
         loading,
         gestorProfile,
+        authError,
         login,
         logout,
     };
 
     return (
         <AuthContext.Provider value={value}>
-            {!loading && children}
+            {children}
         </AuthContext.Provider>
     );
 };
